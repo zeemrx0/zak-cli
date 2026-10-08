@@ -1,0 +1,39 @@
+name: Release zak CLI
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26.11.1'
+      - run: npm ci
+      - run: npm test
+      - name: Validate identity and tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node -e "const p=require('./package.json'),r=require('./src/release/release-metadata');if(process.env.TAG!=='v'+p.version||process.env.GITHUB_REPOSITORY!==r.releaseRepository(p)||!(r.STABLE.test(p.version)||r.BETA.test(p.version)))process.exit(1)"
+      - run: npm run build
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          prerelease=''
+          latest='--latest'
+          case "$TAG" in *-beta.*) prerelease='--prerelease'; latest='--latest=false';; esac
+          gh release create "$TAG" --verify-tag --draft $prerelease $latest --title "$TAG" --notes 'Verified zak CLI release.'
+          gh release upload "$TAG" dist/release/install.sh dist/release/zak-cli-*.tgz dist/release/SHA256SUMS
+          mkdir read-back
+          gh release download "$TAG" --dir read-back
+          cmp dist/release/install.sh read-back/install.sh
+          cmp dist/release/SHA256SUMS read-back/SHA256SUMS
+          (cd read-back && sha256sum -c SHA256SUMS)
+          gh release edit "$TAG" --draft=false $latest

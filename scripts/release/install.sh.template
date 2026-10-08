@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+REPOSITORY='@@REPOSITORY@@'
+TAG='@@TAG@@'
+ARCHIVE='@@ARCHIVE@@'
+EXPECTED_SHA256='@@SHA256@@'
+for command in curl tar node; do
+  command -v "$command" >/dev/null 2>&1 || { echo "zak: required command not found: $command" >&2; exit 1; }
+done
+if ! node -e "const v=process.versions.node.split('.').map(Number),m=[26,11,1],i=v.findIndex((n,j)=>n!==m[j]);process.exit(i>=0&&v[i]<m[i]?1:0)"; then
+  echo "zak: Node 26.11.1+ is required" >&2; exit 1
+fi
+work=$(mktemp -d "${TMPDIR:-/tmp}/zak-bootstrap.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+base="${ZAK_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases/download/$TAG}"
+curl -fsSL --max-time 90 "$base/$ARCHIVE" -o "$work/archive.tgz"
+actual=$(node -e "const fs=require('node:fs'),c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$work/archive.tgz")
+[ "$actual" = "$EXPECTED_SHA256" ] || { echo 'zak: archive checksum mismatch' >&2; exit 1; }
+# Reject links, special files and paths escaping package before extraction.
+node - "$work/archive.tgz" <<'CHECK'
+const {spawnSync}=require('node:child_process');
+const archive=process.argv[2];
+const run=args=>{const r=spawnSync('tar',args,{encoding:'utf8',maxBuffer:16*1024*1024});if(r.status!==0)throw Error('invalid archive');return r.stdout.trim().split('\n');};
+try { const entries=run(['-tzf',archive]);
+if(new Set(entries).size!==entries.length||entries.some(p=>!p.startsWith('package/')||p.includes('\\')||p.replace(/\/$/,'').split('/').some(s=>!s||s==='.'||s==='..'))||run(['-tvzf',archive]).some(p=>!['-','d'].includes(p[0])))throw Error('unsafe archive');
+} catch(error) {console.error('zak: '+error.message);process.exit(1);}
+CHECK
+tar -xzf "$work/archive.tgz" -C "$work"
+node "$work/package/scripts/install-zak.cjs" "$work/package" "$EXPECTED_SHA256" "$@"

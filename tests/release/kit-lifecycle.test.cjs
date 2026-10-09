@@ -60,7 +60,7 @@ test('pinned lifecycle never rediscovers after account changes', async t => {
   }
 });
 test('check and dry-run never write source state or acquire persistent locks', async t => {
-  for (const [operation, dry] of [['check', false], ['install', true], ['uninstall', true]]) {
+  for (const [operation, dry] of [['check', false], ['install', true], ['update', true], ['uninstall', true]]) {
     const f = fixture(t); f.pin();
     assert.equal(await f.run(operation, {}, [f.root, '--target', 'pi', ...(dry ? ['--dry-run'] : [])]), 0);
     assert.equal(f.events.includes('lock'), false);

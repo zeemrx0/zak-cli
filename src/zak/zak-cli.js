@@ -6,6 +6,7 @@ const HELP = `zak — independent CLI and kit management
   zak --version
   zak self-update [--channel stable|beta]
   zak self-uninstall
+  zak update [options] (alias for zak kit update)
   zak kit install|update|check|uninstall [options]
 
 Kit source: authorized GitHub discovery; existing targets retain their source.
@@ -38,6 +39,7 @@ async function main(argv, root = path.resolve(__dirname, '../..')) {
   assertNode();
   if (!argv.length || argv.length === 1 && ['--help', '-h'].includes(argv[0])) { console.log(HELP); return 0; }
   if (argv.length === 1 && ['--version', '-v'].includes(argv[0])) { console.log(require(path.join(root, 'package.json')).version); return 0; }
+  if (argv[0] === 'update') argv = ['kit', 'update', ...argv.slice(1)];
   const [command, ...args] = argv;
   if (command === 'self-update') return selfUpdate(args);
   if (command === 'self-uninstall') return selfUninstall(args);

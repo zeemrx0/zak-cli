@@ -37,6 +37,51 @@ test('kit command mapping rejects bootstrap and contradictory lifecycle flags', 
     assert.throws(() => kitArgs('install', [flag]), /subcommand/);
   assert.throws(() => kitArgs('remove', []), /expected/);
 });
+test('update alias preserves kit update dispatch, validation, help, and exit codes', async t => {
+  const cliPath = require.resolve('../../src/zak/zak-cli');
+  const original = require.cache[cliPath];
+  const lifecycle = require('../../src/zak/kit-lifecycle');
+  const calls = [];
+  const stub = t.mock.method(lifecycle, 'kitLifecycle', async (...args) => {
+    calls.push(args); return 7;
+  });
+  delete require.cache[cliPath];
+  const { main, HELP } = require(cliPath);
+  require.cache[cliPath] = original;
+  stub.mock.restore();
+  const root = path.resolve(__dirname, '../..');
+  const config = require(path.join(root, 'package.json')).kitSourceConfig;
+  for (const options of [
+    [],
+    ['/project with spaces', '--target', 'omp,codex', '--tier', 'general', '--json', '--force', '--dry-run'],
+    ['--global', '--target', 'pi', '--tier', 'general', '--channel', 'beta', '--transport', 'gh'],
+  ]) {
+    const argv = ['update', ...options];
+    assert.equal(await main(argv, root), 7);
+    assert.deepEqual(argv, ['update', ...options]);
+    assert.equal(await main(['kit', 'update', ...options], root), 7);
+    const alias = calls.at(-2), canonical = calls.at(-1);
+    assert.deepEqual(alias, canonical);
+    assert.equal(alias[0], 'update');
+    assert.deepEqual(alias[1], options.includes('--channel') ? { channel: 'beta', transport: 'gh' } : {});
+    assert.deepEqual(alias[2], options.filter((arg, i) => !['--channel', '--transport'].includes(arg) && !['--channel', '--transport'].includes(options[i - 1])));
+    assert.equal(alias[3], config);
+  }
+  const dispatched = calls.length;
+  for (const prefix of [['update'], ['kit', 'update']]) {
+    for (const flag of ['--update', '--check', '--uninstall', '--cli'])
+      await assert.rejects(main([...prefix, flag], root), /subcommand/);
+    await assert.rejects(main([...prefix, '--repo', 'owner/kit'], root), /no longer supported/);
+    await assert.rejects(main([...prefix, '--channel', 'invalid'], root), /invalid kit channel/);
+    await assert.rejects(main([...prefix, '--transport', 'ssh'], root), /invalid kit transport/);
+    const log = t.mock.method(console, 'log', () => {});
+    assert.equal(await main([...prefix, '--help'], root), 0);
+    assert.equal(log.mock.calls[0].arguments[0], HELP);
+    log.mock.restore();
+  }
+  assert.equal(calls.length, dispatched);
+  assert.match(HELP, /zak update \[options\]/);
+});
 test('CLI install is byte-idempotent and self-uninstall leaves kit files', t => {
   const f = fixture(t), result = f.install();
   const marker = path.join(f.home, '.omp', 'user-kit');

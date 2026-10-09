@@ -66,6 +66,11 @@ function readPin(descriptor, env = process.env) {
   const prior = readPrivate(path.join(stateRoot(env), pinKey(old) + '.json'));
   return prior === null ? null : validatePin(prior, old);
 }
+function sameSourceIdentity(a, b) {
+  return a.distribution === b.distribution && (a.distribution === 'private'
+    ? a.repositoryId === b.repositoryId && a.ownerId === b.ownerId
+    : a.repository === b.repository);
+}
 function priorReceipt(descriptor, env) {
   if (path.basename(descriptor.lockPath) !== 'zak-lock.json') return null;
   const old = legacyDescriptor(descriptor);
@@ -76,7 +81,7 @@ function priorReceipt(descriptor, env) {
 function writePin(value, env = process.env) {
   validatePin(value, value.descriptor);
   const prior = priorReceipt(value.descriptor, env);
-  if (prior && ['repository', 'repositoryId', 'ownerId', 'distribution'].some(key => prior.value.source[key] !== value.source[key]))
+  if (prior && !sameSourceIdentity(prior.value.source, value.source))
     throw new Error('conflicting legacy source identity');
   writePrivate(path.join(stateRoot(env, true), pinKey(value.descriptor) + '.json'), value);
   if (prior) fs.unlinkSync(prior.file);
@@ -84,7 +89,7 @@ function writePin(value, env = process.env) {
 function removePin(descriptor, env = process.env) {
   const pin = readPin(descriptor, env);
   const prior = priorReceipt(descriptor, env);
-  if (pin && prior && ['repository', 'repositoryId', 'ownerId', 'distribution'].some(key => prior.value.source[key] !== pin.source[key]))
+  if (pin && prior && !sameSourceIdentity(prior.value.source, pin.source))
     throw new Error('conflicting legacy source identity');
   if (pin !== null) fs.unlinkSync(path.join(stateRoot(env), pinKey(pin.descriptor) + '.json'));
   if (prior && pinKey(prior.value.descriptor) !== pinKey(pin?.descriptor || descriptor)) fs.unlinkSync(prior.file);

@@ -1,12 +1,10 @@
 # zak CLI
 
-Install the CLI once. Manage agent guidance kits from independently verified releases.
-The CLI ships no kit content and has its own version.
+Install the CLI once. Use `zak` to install, update, check, and remove agent guidance kits.
 
 ## 1. Install the CLI
 
 Requires Node **26.11.1+**, macOS/Linux, `curl` and `tar`.
-After the first stable release is published:
 
 ```sh
 set -o pipefail
@@ -15,15 +13,12 @@ export PATH="$HOME/.local/bin:$PATH"
 zak --version
 ```
 
-The bootstrap verifies archive checksums before writing CLI files. The initial downloaded
-script is still trusted. It does not install Node or modify shell profiles.
-CLI files live in `${XDG_DATA_HOME:-$HOME/.local/share}/zak` and the launcher in
-`$HOME/.local/bin/zak`. Foreign files, edits and symlinked parents are refused.
-Use `sh -s -- --channel beta` for a published beta; no stable fallback occurs.
-No npm publication is used.
+The installation command does not install Node or change shell profiles.
+It verifies the downloaded archive, but you must trust the initial installation script.
+Edited files, foreign files, and symlinked installation paths are protected.
 
-Before a release exists, develop from this checkout with `npm ci`, `npm test`, and
-`node scripts/zak.cjs --help`. Release builds require the public configuration below.
+For a published beta CLI, use `sh -s -- --channel beta` instead of `sh`.
+If no beta release is available, installation stops instead of using a stable release.
 
 ## 2. Manage a kit
 
@@ -34,34 +29,34 @@ zak kit check --target omp,codex --tier general
 zak kit uninstall --target omp,codex
 ```
 
-New installs read the private kit URL from the CLI repository's GitHub Actions variable
-`ZAK_PRIVATE_REPO_URL` using local `gh` credentials. The value is not built into the CLI.
-Private-kit users must be collaborators on that repository, have variable-read permission,
-and separately have access to the private kit. Authenticate locally with `gh auth login`.
+Supported targets are `omp`, `pi`, `codex`, and `claude`.
+Omit `--target` to use the interactive picker.
 
-Missing gh/login uses the built-in public fallback. An explicitly empty variable also
-selects public. Authenticated lookup failures—including a missing variable or insufficient
-permission—stop without switching sources. Repository access and immutable identity are
-verified before downloading. Existing targets do not re-read the variable or change source.
-`--repo` is no longer supported.
+For private kit access, install GitHub CLI (`gh`) and authenticate with an account
+that has the required permissions:
 
-For beta kit releases, add `--channel beta`. Kit and CLI channels are independent.
-Existing targets retain their source, transport and channel; only an explicit update
-can change their channel. `--transport gh` is valid for either distribution;
-`--transport curl` cannot select a private source or change a pinned transport.
-Append `--global` for global guidance; do not combine it with a project path.
-Otherwise the project path defaults to cwd. Public/private distribution and project/global
-scope are independent. Omit `--target` for an interactive host picker.
+```sh
+gh auth login
+```
 
-Source receipts and cache generations live outside projects in owner-only user-data
-storage. Check/uninstall use the exact pinned generation, never the latest release.
-Check and dry-run do not advance receipts or persistent caches. A missing/edited generation
-stops safely. Edited files keep their ownership evidence and cleanup-required binding;
-retry uninstall after resolving them. Do not delete pins or active operation guards.
+Without GitHub CLI or a login, new installations use the public kit.
+Authentication or access errors stop the operation instead of switching kits.
+Existing installations retain their kit source.
 
-Legacy installations have no trusted source pin and cannot be auto-adopted, even when
-bytes match. Remove them with their original trusted installer, review retained edits,
-then install again. CLI self-update/removal never removes kit receipts or generations.
+Append `--global` for user-level guidance. Otherwise, commands apply to the current
+project or a supplied project path. Do not combine `--global` with a project path.
+Global installations require explicit tier selection.
+
+Add `--dry-run` to preview changes without applying them.
+For beta kits, add `--channel beta`. Kit and CLI channels are independent.
+Change an installed kit's channel with `zak kit update`.
+`--transport gh` supports authenticated downloads; private kits cannot use `--transport curl`.
+Do not change the transport of an existing installation.
+
+Edited files are preserved. Resolve reported conflicts before retrying an update or removal.
+Do not manually delete installation records or active-operation guards.
+For installations made with an older installer, remove the kit with its original
+installer, review any retained files, then install it with `zak`.
 
 ## 3. Update or remove the CLI
 
@@ -71,29 +66,10 @@ zak self-update --channel beta
 zak self-uninstall
 ```
 
-These commands do not change installed guidance. CLI removal also leaves the kit cache.
-Remove guidance with `zak kit uninstall` before removing the CLI if both are unwanted.
-Interrupted CLI removal can be resumed by rerunning the bootstrap with `--uninstall`.
-Edited or foreign files remain protected during recovery. An unverifiable lock requires
-inspection; do not delete a guard while its process is running.
+These commands do not change or remove installed guidance.
+To remove both the kit and CLI, run `zak kit uninstall` before `zak self-uninstall`.
 
-## Release development
-
-Run `npm test` with Node 26.11.1+. In the public CLI repository's
-**Settings → Secrets and variables → Actions → Variables**, configure two values:
-
-- `ZAK_PUBLIC_REPO`: runnable public fallback, as `owner/repository` or an HTTPS GitHub URL.
-  This is the only build input and is publicly visible in the archive.
-- `ZAK_PRIVATE_REPO_URL`: credential-free HTTPS GitHub URL of the private kit. The CLI
-  reads it at runtime through the protected repository-variable API, not during the build.
-
-Topics and numeric owner-ID configuration are no longer used. Do not pass the private URL
-into build steps, put it in source metadata, or print variable API responses into logs.
-GitHub Actions secrets cannot be read back by the CLI. Never store tokens in these variables.
-Variable readers can inspect the URL even if they lack access to the kit's contents;
-restrict variable access to people authorized to learn its identity.
-The build derives the variable-host repository from the CLI's public package identity,
-validates public configuration, and stages it without modifying source metadata.
-Package and lock versions must match. Stable tags are `vX.Y.Z`; beta tags are `vX.Y.Z-beta.N`. The GitHub workflow verifies
-identity, tests, builds, and checks uploaded assets before publishing. No release has been
-published merely by creating this repository.
+If CLI removal is interrupted, rerun the installation command with
+`sh -s -- --uninstall` instead of `sh`.
+Edited or foreign files remain protected. If an installation record cannot be verified,
+inspect it before retrying. Do not delete a guard while its process is running.

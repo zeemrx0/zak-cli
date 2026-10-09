@@ -88,10 +88,15 @@ test('interactive selection forwards the same operation flags as application in 
         }
         return normal(pkg, args, callbacks);
       };
+      if (operation === 'update') f.deps.selectInstalledTargets = async hosts => {
+        assert.deepEqual(hosts, ['pi']);
+        assert.equal(f.events.includes('pending'), false);
+        return { code: 0, targets: hosts };
+      };
       const args = [global ? '--global' : f.root, '--tier', 'general'];
       assert.equal(await f.run(operation, {}, args), 0);
       assert.deepEqual(calls, [
-        { args: [...args, ...(flag ? [flag] : [])], mode: 'select' },
+        ...(operation === 'update' ? [] : [{ args: [...args, ...(flag ? [flag] : [])], mode: 'select' }]),
         { args: [...args, '--target', 'pi', ...(flag ? [flag] : [])], mode: 'apply' },
       ]);
     }
@@ -104,9 +109,8 @@ test('cancelled interactive update does not apply or write pending state', async
     t.after(() => previous ? Object.defineProperty(stream, 'isTTY', previous) : delete stream.isTTY);
   }
   const f = fixture(t); f.pin();
-  f.deps.runControlled = async (_pkg, args, callbacks) => {
-    assert.equal(callbacks.mode, 'select');
-    assert.ok(args.includes('--update'));
+  f.deps.selectInstalledTargets = async hosts => {
+    assert.deepEqual(hosts, ['pi']);
     return { code: 130, targets: [] };
   };
   assert.equal(await f.run('update', {}, [f.root]), 130);
@@ -154,6 +158,76 @@ test('partial uninstall retains cleanup state and a successful retry removes it'
   };
   assert.equal(await f.run('uninstall'), 2); assert.equal([...f.pins.values()][0].state, 'cleanup-required');
   f.deps.runControlled = normal; assert.equal(await f.run('uninstall'), 0); assert.equal(f.pins.size, 0);
+});
+function interactive(t) {
+  for (const stream of [process.stdin, process.stdout]) {
+    const previous = Object.getOwnPropertyDescriptor(stream, 'isTTY');
+    Object.defineProperty(stream, 'isTTY', { value: true, configurable: true });
+    t.after(() => previous ? Object.defineProperty(stream, 'isTTY', previous) : delete stream.isTTY);
+  }
+}
+function seed(f, host, scope, state = 'installed', operation = 'install') {
+  const descriptor = resolveTarget({ host, scope, project: f.root, env: f.env });
+  f.pins.set(JSON.stringify(descriptor), { schema: 1, descriptor, source, snapshot, state, operation });
+}
+test('automatic update lists only installed hosts within the requested scope', async t => {
+  interactive(t);
+  for (const scope of ['project', 'global']) {
+    const f = fixture(t), calls = [];
+    seed(f, 'pi', scope); seed(f, 'codex', scope);
+    seed(f, 'omp', scope, 'pending', 'update'); seed(f, 'claude', scope, 'cleanup-required', 'uninstall');
+    seed(f, 'claude', scope === 'global' ? 'project' : 'global');
+    f.deps.pinnedSnapshot = () => { throw Error('old picker must not run'); };
+    f.deps.selectInstalledTargets = async hosts => {
+      assert.deepEqual(hosts, ['pi', 'codex']);
+      return { code: 0, targets: hosts };
+    };
+    const normal = f.deps.runControlled;
+    f.deps.runControlled = async (pkg, args, callbacks) => {
+      assert.notEqual(callbacks.mode, 'select'); calls.push(args);
+      return normal(pkg, args, callbacks);
+    };
+    const args = [scope === 'global' ? '--global' : f.root, '--tier', 'general', '--force'];
+    assert.equal(await f.run('update', {}, args), 0);
+    assert.deepEqual(calls, ['pi', 'codex'].map(host => [...args, '--target', host, '--update']));
+  }
+});
+test('empty update scope is a no-op without locking, prompting or fetching', async t => {
+  const f = fixture(t), messages = [], previous = console.log;
+  console.log = message => messages.push(message); t.after(() => { console.log = previous; });
+  seed(f, 'pi', 'global'); seed(f, 'omp', 'project', 'pending', 'update');
+  seed(f, 'claude', 'project', 'cleanup-required', 'uninstall');
+  f.deps.selectInstalledTargets = () => { throw Error('must not prompt'); };
+  assert.equal(await f.run('update', {}, [f.root, '--json']), 0);
+  assert.deepEqual(messages, ['No installed kits to update']);
+  assert.deepEqual(f.events, []);
+});
+test('automatic dry-run selects installed targets but never writes or locks', async t => {
+  interactive(t); const f = fixture(t); f.pin();
+  f.deps.selectInstalledTargets = async hosts => ({ code: 0, targets: hosts });
+  assert.equal(await f.run('update', {}, [f.root, '--dry-run']), 0);
+  assert.equal(f.events.includes('lock'), false); assert.equal(f.events.includes('pending'), false);
+});
+test('populated automatic update still requires explicit targets in JSON mode', async t => {
+  interactive(t); const f = fixture(t); f.pin();
+  await assert.rejects(f.run('update', {}, [f.root, '--json']), /choose hosts with --target/);
+  assert.deepEqual(f.events, []);
+});
+test('explicit target resumes an interrupted update without the installed-only picker', async t => {
+  const f = fixture(t); f.pin({ state: 'pending', operation: 'update' });
+  f.deps.selectInstalledTargets = () => { throw Error('must not prompt'); };
+  assert.equal(await f.run('update'), 0);
+  assert.ok(f.events.includes('exact')); assert.equal(f.events.includes('download'), false);
+});
+test('automatic update fails closed on unsafe receipts or invalid selection', async t => {
+  interactive(t); const f = fixture(t);
+  f.deps.readPin = () => { throw Error('invalid installed source receipt'); };
+  await assert.rejects(f.run('update', {}, [f.root]), /invalid installed source receipt/);
+  assert.deepEqual(f.events, []);
+  const other = fixture(t); other.pin();
+  other.deps.selectInstalledTargets = async () => ({ code: 0, targets: ['omp'] });
+  await assert.rejects(other.run('update', {}, [other.root]), /invalid installed kit selection/);
+  assert.deepEqual(other.events, ['lock', 'unlock']);
 });
 test('mixed-source targets use their own generations and preserve a successful target on failure', async t => {
   const f = fixture(t); f.pin();

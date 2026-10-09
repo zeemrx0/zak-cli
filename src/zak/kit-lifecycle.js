@@ -5,6 +5,7 @@ const { discoverSource } = require('./github-discovery');
 const { validateConfig } = require('./kit-source-config');
 const { kitSnapshot, pinnedSnapshot } = require('./kit-snapshot');
 const { runControlled } = require('./kit-control-runner');
+const { selectInstalledTargets } = require('./kit-update-picker');
 const { refreshPinnedSource } = require('./pinned-source-refresh');
 const { compatibleDescriptor, readPin, writePin, removePin, lockSources } = require('./kit-source-pins');
 const HOSTS = ['omp', 'pi', 'codex', 'claude'];
@@ -64,29 +65,43 @@ function legacy(descriptor) {
 async function kitLifecycle(operation, options, args, config, env = process.env, dependencies = {}) {
   if (!['install', 'update', 'check', 'uninstall'].includes(operation)) throw new Error('invalid kit lifecycle operation');
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
-    readPin, writePin, removePin, lockSources, refreshPinnedSource, ...dependencies };
+    readPin, writePin, removePin, lockSources, refreshPinnedSource, selectInstalledTargets, ...dependencies };
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
   const operationFlags = { install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
   let releaseLock, picker;
   try {
-    if (!readonly) releaseLock = deps.lockSources(env);
     let hosts = parsed.hosts;
-    if (!hosts) {
+    if (!hosts && operation === 'update') {
+      const installedHosts = () => HOSTS.filter(host => deps.readPin(descriptorFor(host), env)?.state === 'installed');
+      let eligible = installedHosts();
+      if (!eligible.length) { console.log('No installed kits to update'); return 0; }
       if (!process.stdin.isTTY || !process.stdout.isTTY || args.includes('--json')) throw new Error('choose hosts with --target');
-      const descriptors = HOSTS.map(descriptorFor);
-      const pins = descriptors.map(descriptor => deps.readPin(descriptor, env));
-      const pin = pins.find(Boolean);
-      if (pin) picker = deps.pinnedSnapshot(pin, env);
-      else {
-        if (operation !== 'install') throw new Error('no trusted source pin; use the original installer to remove legacy targets');
-        const source = deps.discoverSource(validateConfig(config), { env, channel: options.channel || 'stable' });
-        if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
-        picker = await deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, env);
-      }
-      const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
+      if (!readonly) releaseLock = deps.lockSources(env);
+      eligible = installedHosts();
+      if (!eligible.length) { console.log('No installed kits to update'); return 0; }
+      const selection = await deps.selectInstalledTargets(eligible);
       if (selection.code) return selection.code;
       hosts = selection.targets;
+      if (!hosts?.length || hosts.some(host => !eligible.includes(host))) throw new Error('invalid installed kit selection');
+    } else {
+      if (!readonly) releaseLock = deps.lockSources(env);
+      if (!hosts) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY || args.includes('--json')) throw new Error('choose hosts with --target');
+        const descriptors = HOSTS.map(descriptorFor);
+        const pins = descriptors.map(descriptor => deps.readPin(descriptor, env));
+        const pin = pins.find(Boolean);
+        if (pin) picker = deps.pinnedSnapshot(pin, env);
+        else {
+          if (operation !== 'install') throw new Error('no trusted source pin; use the original installer to remove legacy targets');
+          const source = deps.discoverSource(validateConfig(config), { env, channel: options.channel || 'stable' });
+          if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
+          picker = await deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, env);
+        }
+        const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
+        if (selection.code) return selection.code;
+        hosts = selection.targets;
+      }
     }
     const descriptors = hosts.map(descriptorFor);
     const plans = descriptors.map(descriptor => {

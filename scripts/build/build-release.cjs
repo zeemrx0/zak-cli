@@ -13,7 +13,7 @@ const RUNTIME = ['scripts/zak.cjs', 'scripts/install-zak.cjs', 'src/zak/zak-cli.
   'src/zak/cli-uninstall.js', 'src/release/release-download.js', 'scripts/release/install.sh.template',
   'src/zak/kit-lifecycle.js', 'src/zak/kit-source-config.js', 'src/zak/github-discovery.js',
   'src/zak/kit-source-pins.js', 'src/zak/kit-private-state.js', 'src/zak/kit-target-locator.js',
-  'src/zak/kit-control-runner.js', 'src/zak/kit-snapshot.js', 'src/zak/pinned-source-refresh.js'];
+  'src/zak/kit-control-runner.js', 'src/zak/kit-update-picker.js', 'src/zak/kit-snapshot.js', 'src/zak/pinned-source-refresh.js'];
 function buildRelease(root = path.resolve(__dirname, '../..'), out = path.join(root, 'dist/release'), env = process.env) {
   assertNode();
   let pkg, lock;

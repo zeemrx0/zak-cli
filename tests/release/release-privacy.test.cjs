@@ -46,9 +46,17 @@ test('configured archive has runtime closure and excludes identity/token canarie
   const probe = spawnSync(process.execPath, [path.join(packed, 'scripts/zak.cjs'), '--help'], { encoding: 'utf8' });
   assert.equal(probe.status, 0); assert.equal(probe.stdout.includes('--repo'), false);
   assert.equal(fs.existsSync(path.join(packed, 'agents')), false);
+  for (const command of [['update'], ['kit', 'update']]) {
+    const empty = spawnSync(process.execPath, [path.join(packed, 'scripts/zak.cjs'), ...command, packed], {
+      encoding: 'utf8', env: { ...process.env, HOME: f.root, XDG_DATA_HOME: path.join(f.root, 'data') },
+    });
+    assert.equal(empty.status, 0, empty.stderr);
+    assert.equal(empty.stdout.trim(), 'No installed kits to update');
+    assert.equal(fs.existsSync(path.join(f.root, 'data')), false);
+  }
 });
 test('missing required runtime and unresolved imports prevent release outputs', t => {
-  for (const rel of ['src/zak/kit-control-runner.js', 'src/zak/cli-lock.js']) {
+  for (const rel of ['src/zak/kit-control-runner.js', 'src/zak/kit-update-picker.js', 'src/zak/cli-lock.js']) {
     const f = fixture(t); fs.unlinkSync(path.join(f.source, rel));
     assert.throws(() => buildRelease(f.source, f.out, ENV), /runtime/);
     assert.equal(fs.existsSync(f.out), false);

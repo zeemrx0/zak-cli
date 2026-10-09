@@ -66,6 +66,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
     readPin, writePin, removePin, lockSources, refreshPinnedSource, ...dependencies };
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
+  const operationFlags = { install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
   let releaseLock, picker;
   try {
@@ -83,7 +84,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
         picker = await deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, env);
       }
-      const selection = await deps.runControlled(picker.pkg, parsed.rest, { mode: 'select', env });
+      const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
       if (selection.code) return selection.code;
       hosts = selection.targets;
     }
@@ -118,7 +119,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         handle = exact ? deps.pinnedSnapshot(pin, env) : await deps.kitSnapshot(source, { readonly }, env);
         const pending = { schema: 1, descriptor, source, snapshot: handle.snapshot, state: 'pending', operation };
         const forwarded = [...parsed.rest, '--target', descriptor.host,
-          ...({ install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation])];
+          ...operationFlags];
         const result = await deps.runControlled(handle.pkg, forwarded, { env, descriptor,
           onPrepare(actual) {
             if (!compatibleDescriptor(actual, descriptor)) throw new Error('installer target mismatch');

@@ -67,6 +67,53 @@ test('check and dry-run never write source state or acquire persistent locks', a
     assert.equal(f.events.includes('pending'), false); assert.equal(f.events.includes('removed'), false);
   }
 });
+test('interactive selection forwards the same operation flags as application in project and global scope', async t => {
+  for (const stream of [process.stdin, process.stdout]) {
+    const previous = Object.getOwnPropertyDescriptor(stream, 'isTTY');
+    Object.defineProperty(stream, 'isTTY', { value: true, configurable: true });
+    t.after(() => previous ? Object.defineProperty(stream, 'isTTY', previous) : delete stream.isTTY);
+  }
+  for (const global of [false, true]) {
+    for (const [operation, flag] of [['install', null], ['update', '--update'], ['check', '--check'], ['uninstall', '--uninstall']]) {
+      const f = fixture(t), calls = [];
+      const descriptor = resolveTarget({ host: 'pi', scope: global ? 'global' : 'project', project: f.root, env: f.env });
+      f.pins.set(JSON.stringify(descriptor), { schema: 1, descriptor, source, snapshot, state: 'installed', operation: 'install' });
+      const normal = f.deps.runControlled;
+      f.deps.runControlled = async (pkg, args, callbacks) => {
+        calls.push({ args, mode: callbacks.mode || 'apply' });
+        if (callbacks.mode === 'select') {
+          assert.equal(f.events.includes('pending'), false);
+          assert.equal(f.events.includes('mutate'), false);
+          return { code: 0, targets: ['pi'] };
+        }
+        return normal(pkg, args, callbacks);
+      };
+      const args = [global ? '--global' : f.root, '--tier', 'general'];
+      assert.equal(await f.run(operation, {}, args), 0);
+      assert.deepEqual(calls, [
+        { args: [...args, ...(flag ? [flag] : [])], mode: 'select' },
+        { args: [...args, '--target', 'pi', ...(flag ? [flag] : [])], mode: 'apply' },
+      ]);
+    }
+  }
+});
+test('cancelled interactive update does not apply or write pending state', async t => {
+  for (const stream of [process.stdin, process.stdout]) {
+    const previous = Object.getOwnPropertyDescriptor(stream, 'isTTY');
+    Object.defineProperty(stream, 'isTTY', { value: true, configurable: true });
+    t.after(() => previous ? Object.defineProperty(stream, 'isTTY', previous) : delete stream.isTTY);
+  }
+  const f = fixture(t); f.pin();
+  f.deps.runControlled = async (_pkg, args, callbacks) => {
+    assert.equal(callbacks.mode, 'select');
+    assert.ok(args.includes('--update'));
+    return { code: 130, targets: [] };
+  };
+  assert.equal(await f.run('update', {}, [f.root]), 130);
+  assert.equal(f.events.includes('pending'), false);
+  assert.equal(f.events.includes('mutate'), false);
+  assert.equal(f.events.at(-1), 'unlock');
+});
 test('missing pins and legacy targets stop before downloads', async t => {
   const f = fixture(t);
   await assert.rejects(f.run('check'), /no trusted/);

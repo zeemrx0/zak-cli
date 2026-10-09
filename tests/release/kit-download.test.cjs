@@ -4,16 +4,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { runZak } = require('../zak-release-helper.cjs');
+const { kitPackage } = require('../../src/zak/kit-cache');
 const { hash } = require('../../src/zak/cli-safety');
 const { sourceArgs } = require('../../src/zak/zak-cli');
-const ROOT = path.resolve(__dirname, '../..');
+
 test('source parsing preserves kit options and rejects ambiguous sources', () => {
-  const parsed = sourceArgs(['--repo', 'owner/kit', '--transport', 'gh', '--channel', 'beta', '/project with spaces', '--target', 'pi']);
-  assert.deepEqual(parsed.source, { repository: 'owner/kit', transport: 'gh', channel: 'beta' });
+  const parsed = sourceArgs(['--transport', 'gh', '--channel', 'beta', '/project with spaces', '--target', 'pi']);
+  assert.deepEqual(parsed.source, { transport: 'gh', channel: 'beta' });
   assert.deepEqual(parsed.rest, ['/project with spaces', '--target', 'pi']);
-  assert.throws(() => sourceArgs([]), /require --repo/);
-  assert.throws(() => sourceArgs(['--repo', 'a/b', '--repo', 'c/d']), /repeated/);
+  assert.deepEqual(sourceArgs([]).source, {});
+  assert.throws(() => sourceArgs(['--repo', 'a/b']), /no longer supported/);
+  assert.throws(() => sourceArgs(['--repo=a/b']), /no longer supported/);
 });
 test('private kit transport uses gh only and refuses anonymous fallback', async t => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zak-gh-')));
@@ -30,13 +31,10 @@ test('private kit transport uses gh only and refuses anonymous fallback', async 
   fs.writeFileSync(path.join(bin, 'gh'), fake, { mode: 0o755 });
   const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, GH_FIXTURE: dir };
   for (const key of ['ZAK_ROOT', 'XDG_DATA_HOME', 'ZAK_RELEASE_API_URL', 'ZAK_RELEASE_BASE_URL']) delete env[key];
-  const args = ['kit', 'install', '--repo', 'fixture/private-kit', '--transport', 'gh', '--target', 'omp'];
-  const cli = path.join(ROOT, 'scripts/zak.cjs');
-  const installed = await runZak(cli, args, env, project);
-  assert.equal(installed.code, 0, installed.output);
-  assert.equal(fs.readFileSync(path.join(project, '.private-kit'), 'utf8'), 'authenticated');
-  const failed = await runZak(cli, args, { ...env, GH_FAIL: '1' }, project);
-  assert.notEqual(failed.code, 0); assert.match(failed.output, /gh request failed/);
-  const override = await runZak(cli, args, { ...env, ZAK_RELEASE_BASE_URL: 'http://127.0.0.1:1' }, project);
-  assert.notEqual(override.code, 0); assert.match(override.output, /overrides/);
+  const source = { repository: 'fixture/private-kit', transport: 'gh', channel: 'stable' };
+  const installed = await kitPackage(source, true, env);
+  assert.equal(fs.readFileSync(path.join(installed, 'scripts/ship-kit.cjs'), 'utf8'),
+    "require('node:fs').writeFileSync('.private-kit', 'authenticated');");
+  await assert.rejects(kitPackage(source, true, { ...env, GH_FAIL: '1' }), /gh request failed/);
+  await assert.rejects(kitPackage(source, true, { ...env, ZAK_RELEASE_BASE_URL: 'http://127.0.0.1:1' }), /overrides/);
 });

@@ -1,14 +1,15 @@
 const path = require('node:path');
 const { assertNode } = require('../shared/node-runtime');
 const { selfUpdate, selfUninstall } = require('./cli-self-management');
-const { kitPackage, runKit } = require('./kit-cache');
+const { kitLifecycle } = require('./kit-lifecycle');
 const HELP = `zak — independent CLI and kit management
   zak --version
   zak self-update [--channel stable|beta]
   zak self-uninstall
-  zak kit install|update|check|uninstall --repo owner/name [options]
+  zak kit install|update|check|uninstall [options]
 
-Kit source: --transport curl|gh (default curl), --channel stable|beta
+Kit source: authorized GitHub discovery; existing targets retain their source.
+Options: --transport curl|gh, --channel stable|beta
 Private sources require authenticated gh transport. CLI releases contain no kits.
 Kit options: [project] --target omp,pi,codex,claude --tier <tiers> --global --json
 self-update never changes installed kits; self-uninstall leaves kits and cache.
@@ -21,14 +22,16 @@ function kitArgs(operation, args) {
   return [...args, ...mode];
 }
 function sourceArgs(args) {
-  const source = { repository: null, channel: 'stable', transport: 'curl' }, rest = [], seen = new Set();
+  const source = {}, rest = [], seen = new Set();
   for (let i = 0; i < args.length; i++) {
-    const key = { '--repo': 'repository', '--channel': 'channel', '--transport': 'transport' }[args[i]];
+    if (args[i] === '--repo' || args[i].startsWith('--repo=')) throw new Error('--repo is no longer supported; kit sources are discovered automatically');
+    const key = { '--channel': 'channel', '--transport': 'transport' }[args[i]];
     if (!key) { rest.push(args[i]); continue; }
     if (seen.has(key) || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`invalid or repeated ${args[i]}`);
     seen.add(key); source[key] = args[++i];
   }
-  if (!source.repository) throw new Error('kit commands require --repo owner/name');
+  if (source.channel && !['stable', 'beta'].includes(source.channel)) throw new Error('invalid kit channel');
+  if (source.transport && !['curl', 'gh'].includes(source.transport)) throw new Error('invalid kit transport');
   return { source, rest };
 }
 async function main(argv, root = path.resolve(__dirname, '../..')) {
@@ -42,8 +45,9 @@ async function main(argv, root = path.resolve(__dirname, '../..')) {
   const [operation, ...options] = args;
   if (!operation || operation === '--help') { console.log(HELP); return 0; }
   const { source, rest } = sourceArgs(options);
-  const forwarded = kitArgs(operation, rest);
-  const pkg = await kitPackage(source, ['install', 'update'].includes(operation));
-  return runKit(pkg, forwarded);
+  kitArgs(operation, rest);
+  if (rest.includes('--help') || rest.includes('-h')) { console.log(HELP); return 0; }
+  const metadata = require(path.join(root, 'package.json'));
+  return kitLifecycle(operation, source, rest, metadata.kitSourceConfig);
 }
 module.exports = { main, kitArgs, sourceArgs, HELP };

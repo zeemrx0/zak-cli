@@ -17,17 +17,34 @@ test('real CLI release upgrades independently and preserves kit state/cache', { 
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zak-e2e-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const home = path.join(dir, 'home'), project = path.join(dir, 'project'); fs.mkdirSync(home); fs.mkdirSync(project);
-  const first = buildRelease(ROOT, path.join(dir, 'release0'));
+  const firstRoot = path.join(dir, 'cli-source'); fs.mkdirSync(firstRoot);
+  for (const rel of ['src', 'scripts', 'package.json', 'package-lock.json', 'README.md', 'LICENSE'])
+    fs.cpSync(path.join(ROOT, rel), path.join(firstRoot, rel), { recursive: true });
+
+  const buildEnv = { ZAK_PUBLIC_REPO: 'fixture/kit' };
+  const first = buildRelease(firstRoot, path.join(dir, 'release0'), buildEnv);
   const firstBytes = fs.readFileSync(path.join(first.out, first.archive));
   const nextRoot = unpack(firstBytes, path.join(dir, 'next-source'));
   const pkg = JSON.parse(fs.readFileSync(path.join(nextRoot, 'package.json'))); pkg.version = '0.1.1';
   fs.writeFileSync(path.join(nextRoot, 'package.json'), JSON.stringify(pkg));
   fs.writeFileSync(path.join(nextRoot, 'package-lock.json'), JSON.stringify({ version: pkg.version, lockfileVersion: 3, packages: { '': { version: pkg.version } } }));
-  const second = buildRelease(nextRoot, path.join(dir, 'release1'));
+  const second = buildRelease(nextRoot, path.join(dir, 'release1'), buildEnv);
   const secondBytes = fs.readFileSync(path.join(second.out, second.archive));
   const kitRoot = path.join(dir, 'kit/package'); fs.mkdirSync(path.join(kitRoot, 'scripts'), { recursive: true });
-  fs.writeFileSync(path.join(kitRoot, 'package.json'), JSON.stringify({ name: 'z-agent-kit', version: '9.0.0', repository: 'https://github.com/fixture/kit.git' }));
-  fs.writeFileSync(path.join(kitRoot, 'scripts/ship-kit.cjs'), `const fs=require('node:fs'),p=require('node:path');const a=process.argv.slice(2),f=p.join(process.cwd(),'.fixture-kit');if(a.includes('--uninstall'))fs.unlinkSync(f);else if(!a.includes('--check'))fs.writeFileSync(f,'kit 9.0.0');else if(fs.readFileSync(f,'utf8')!=='kit 9.0.0')process.exitCode=2;`);
+  fs.writeFileSync(path.join(kitRoot, 'package.json'), JSON.stringify({ name: 'z-agent-kit', version: '9.0.0',
+    kitControlProtocol: 1, repository: 'https://github.com/fixture/kit.git' }));
+  fs.mkdirSync(path.join(kitRoot, 'src/installer/cli'), { recursive: true });
+  fs.writeFileSync(path.join(kitRoot, 'src/installer/cli/kit-control.js'), '// fixture protocol');
+  fs.copyFileSync(path.join(ROOT, 'src/zak/kit-target-locator.js'), path.join(kitRoot, 'target-locator.js'));
+  fs.writeFileSync(path.join(kitRoot, 'scripts/ship-kit.cjs'), `
+const fs=require('node:fs'),p=require('node:path'),a=process.argv.slice(2),f=p.join(process.cwd(),'.fixture-kit');
+const host=a[a.indexOf('--target')+1];const descriptor=require('../target-locator').resolveTarget({host,scope:'project',project:process.cwd()});
+process.on('message',m=>{if(m.sequence===1){
+if(a.includes('--uninstall')){fs.rmSync(descriptor.lockPath,{force:true});fs.rmSync(f,{force:true});}
+else if(!a.includes('--check')){fs.mkdirSync(descriptor.controlRoot,{recursive:true});fs.writeFileSync(descriptor.lockPath,'owned');fs.writeFileSync(f,'kit 9.0.0');}
+else if(fs.readFileSync(f,'utf8')!=='kit 9.0.0')process.exitCode=2;
+process.send({schema:1,kind:'result',sequence:2,descriptor,exitCode:process.exitCode||0,complete:!process.exitCode});
+}else process.disconnect();});process.send({schema:1,kind:'prepare',sequence:1,descriptor});`);
   const kitArchive = path.join(dir, 'kit.tgz');
   assert.equal(spawnSync('tar', ['-czf', kitArchive, '-C', path.dirname(kitRoot), 'package']).status, 0);
   const kitBytes = fs.readFileSync(kitArchive); let corrupt = false, requests = 0;
@@ -53,8 +70,10 @@ test('real CLI release upgrades independently and preserves kit state/cache', { 
     assert.equal(result.code, 0, result.output); return result.output;
   };
   assert.equal((await command(['--version'])).trim(), first.version);
-  const kitOptions = ['--repo', 'fixture/kit', '--target', 'omp,codex', '--json'];
-  const kitEnv = { ZAK_RELEASE_API_URL: url + '/kit-api' };
+  const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}\nprocess.stderr.write('not logged into any GitHub hosts');process.exit(1);`, { mode: 0o755 });
+  const kitOptions = ['--target', 'omp,codex', '--json'];
+  const kitEnv = { ZAK_RELEASE_API_URL: url + '/kit-api', PATH: bin + ':' + process.env.PATH, GH_TOKEN: '', GITHUB_TOKEN: '' };
   await command(['kit', 'install', ...kitOptions], kitEnv);
   const beforeKit = fs.readFileSync(path.join(project, '.fixture-kit'));
   const receipt = path.join(home, '.local/share/zak/receipt.json');

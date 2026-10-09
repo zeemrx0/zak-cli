@@ -7,6 +7,17 @@ const { releaseRepository } = require('../release/release-metadata');
 const { unpack } = require('../release/archive-package');
 const { hash, files, safeParents } = require('./cli-safety');
 const { acquire } = require('./cli-lock');
+const { privateDirectory, readPrivate } = require('./kit-private-state');
+const { validateSnapshot } = require('./kit-source-pins');
+function envelope(pkg, receipt, cleanup = () => {}) {
+  let metadata;
+  try { metadata = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')); }
+  catch { throw new Error('invalid controlled kit metadata'); }
+  if (metadata.kitControlProtocol !== 1) throw new Error('kit release requires source-control protocol 1');
+  const snapshot = { id: receipt.id, tag: receipt.tag, files: receipt.files };
+  validateSnapshot(snapshot);
+  return { pkg, snapshot, cleanup };
+}
 function cacheRoot(source, env) {
   if (!env.HOME || !path.isAbsolute(env.HOME) || env.XDG_DATA_HOME && !path.isAbsolute(env.XDG_DATA_HOME))
     throw new Error('absolute HOME and XDG_DATA_HOME are required');
@@ -27,14 +38,19 @@ function load(root, source) {
     throw new Error('edited kit cache; kept');
   return pkg;
 }
-async function kitPackage(source, refresh, env = process.env) {
+async function kitPackage(source, refresh, env = process.env, options = {}) {
   validateSource(source, env);
   const root = cacheRoot(source, env);
-  if (!refresh && fs.existsSync(root)) { const cached = load(root, source); if (cached) return cached; }
+  if (!refresh && fs.existsSync(root)) {
+    if (options.envelope) privateDirectory(root);
+    const cached = load(root, source);
+    if (cached) return options.envelope ? envelope(cached, readPrivate(path.join(root, 'cache.json'))) : cached;
+  }
   const release = await selectRelease(source, env);
   const bytes = await downloadAsset(source, release, `z-agent-kit-${release.tag_name}.tgz`, env);
   const id = hash(bytes);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zak-kit-'));
+  let retained = false;
   try {
     const pkg = unpack(bytes, path.join(temporary, 'unpacked'));
     let metadata;
@@ -44,7 +60,14 @@ async function kitPackage(source, refresh, env = process.env) {
         !fs.existsSync(path.join(pkg, 'scripts/ship-kit.cjs'))) throw new Error('kit archive identity or entry point mismatch');
     if (metadata.private === true && source.transport !== 'gh') throw new Error('private kit requires authenticated gh transport');
     const inventory = files(pkg);
-    fs.mkdirSync(root, { recursive: true });
+    const receipt = { ...source, id, tag: release.tag_name, files: inventory };
+    if (options.envelope) envelope(pkg, receipt);
+    if (options.transient) {
+      const result = envelope(pkg, receipt, () => fs.rmSync(temporary, { recursive: true, force: true }));
+      retained = true;
+      return result;
+    }
+    privateDirectory(root, true);
     const releaseLock = acquire(root, '.cache-lock');
     try {
       if (fs.existsSync(path.join(root, 'cache.json'))) load(root, source);
@@ -63,11 +86,11 @@ async function kitPackage(source, refresh, env = process.env) {
       // Cache activation is non-destructive. Failed writes leave existing generations intact.
       const next = path.join(root, 'cache-next.json');
       if (fs.existsSync(next)) throw new Error('interrupted cache activation; inspect cache-next.json');
-      fs.writeFileSync(next, JSON.stringify(receipt), { flag: 'wx' });
+      fs.writeFileSync(next, JSON.stringify(receipt), { flag: 'wx', mode: 0o600 });
       fs.renameSync(next, path.join(root, 'cache.json'));
-      return path.join(generation, 'package');
+      return options.envelope ? envelope(path.join(generation, 'package'), receipt) : path.join(generation, 'package');
     } finally { releaseLock(); }
-  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+  } finally { if (!retained) fs.rmSync(temporary, { recursive: true, force: true }); }
 }
 function runKit(pkg, args) {
   const result = spawnSync(process.execPath, [path.join(pkg, 'scripts/ship-kit.cjs'), ...args], { stdio: 'inherit' });

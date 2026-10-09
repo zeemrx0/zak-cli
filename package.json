@@ -1,12 +1,29 @@
 {
   "name": "zak-cli",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Independent CLI for verified agent guidance kit releases",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/zeemrx0/zak-cli.git" },
-  "engines": { "node": ">=26.11.1" },
-  "bin": { "zak": "scripts/zak.cjs" },
-  "scripts": { "test": "node --test tests/release/*.test.cjs", "build": "node scripts/build/build-release.cjs" },
-  "files": ["src/", "scripts/zak.cjs", "scripts/install-zak.cjs", "scripts/release/install.sh.template", "LICENSE", "README.md"]
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zeemrx0/zak-cli.git"
+  },
+  "engines": {
+    "node": ">=26.11.1"
+  },
+  "bin": {
+    "zak": "scripts/zak.cjs"
+  },
+  "scripts": {
+    "test": "node --test tests/release/*.test.cjs",
+    "build": "node scripts/build/build-release.cjs"
+  },
+  "files": [
+    "src/",
+    "scripts/zak.cjs",
+    "scripts/install-zak.cjs",
+    "scripts/release/install.sh.template",
+    "LICENSE",
+    "README.md"
+  ]
 }

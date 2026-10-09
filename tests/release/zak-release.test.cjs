@@ -25,10 +25,13 @@ test('real CLI release upgrades independently and preserves kit state/cache', { 
   const first = buildRelease(firstRoot, path.join(dir, 'release0'), buildEnv);
   const firstBytes = fs.readFileSync(path.join(first.out, first.archive));
   const nextRoot = unpack(firstBytes, path.join(dir, 'next-source'));
-  const pkg = JSON.parse(fs.readFileSync(path.join(nextRoot, 'package.json'))); pkg.version = '0.1.1';
+  const pkg = JSON.parse(fs.readFileSync(path.join(nextRoot, 'package.json')));
+  const [major, minor, patch] = pkg.version.split('-')[0].split('.').map(Number);
+  pkg.version = `${major}.${minor}.${patch + 1}`;
   fs.writeFileSync(path.join(nextRoot, 'package.json'), JSON.stringify(pkg));
   fs.writeFileSync(path.join(nextRoot, 'package-lock.json'), JSON.stringify({ version: pkg.version, lockfileVersion: 3, packages: { '': { version: pkg.version } } }));
   const second = buildRelease(nextRoot, path.join(dir, 'release1'), buildEnv);
+  assert.notEqual(second.archive, first.archive, 'upgrade fixture must use a distinct version');
   const secondBytes = fs.readFileSync(path.join(second.out, second.archive));
   const kitRoot = path.join(dir, 'kit/package'); fs.mkdirSync(path.join(kitRoot, 'scripts'), { recursive: true });
   fs.writeFileSync(path.join(kitRoot, 'package.json'), JSON.stringify({ name: 'z-agent-kit', version: '9.0.0',
@@ -82,7 +85,7 @@ process.send({schema:1,kind:'result',sequence:2,descriptor,exitCode:process.exit
   assert.notEqual(failed.code, 0); assert.match(failed.output, /checksum mismatch/);
   assert.equal((await command(['--version'])).trim(), first.version);
   corrupt = false; await command(['self-update']);
-  assert.equal((await command(['--version'])).trim(), '0.1.1');
+  assert.equal((await command(['--version'])).trim(), second.version);
   assert.deepEqual(fs.readFileSync(path.join(project, '.fixture-kit')), beforeKit);
   const beforeCli = fs.readFileSync(receipt);
   await command(['kit', 'update', ...kitOptions], kitEnv);

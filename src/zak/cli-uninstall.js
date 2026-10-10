@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const ui = require('./cli-ui');
 const path = require('node:path');
 const { paths, readReceipt, validateReceipt, verifyOwned, locked, safeParents } = require('./cli-safety');
 const { recover, removeCreated } = require('./cli-transaction');
@@ -14,7 +15,7 @@ function selfUninstall(args, env = process.env) {
   const { root, launcher } = paths(env), journalFile = safeParents(root + '.uninstall.json');
   if (!fs.existsSync(root) && !fs.existsSync(launcher)) {
     if (fs.existsSync(journalFile)) { readJournal(journalFile, root, launcher); fs.unlinkSync(journalFile); }
-    console.log('zak CLI already removed.'); return 0;
+    ui.info('zak CLI already removed.'); return 0;
   }
   locked(root, () => {
     if (fs.existsSync(path.join(root, '.update-lock'))) locked(root, () => {}, '.update-lock');
@@ -38,7 +39,7 @@ function selfUninstall(args, env = process.env) {
   });
   fs.rmdirSync(root);
   fs.unlinkSync(journalFile);
-  console.log('zak CLI removed. Installed kits and kit cache were not changed.');
+  ui.success('zak CLI removed. Installed kits and kit cache were not changed.');
   return 0;
 }
 module.exports = { selfUninstall };

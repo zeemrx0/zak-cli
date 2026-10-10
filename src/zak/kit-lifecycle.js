@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const ui = require('./cli-ui');
 const path = require('node:path');
 const { resolveTarget } = require('./kit-target-locator');
 const { discoverSource } = require('./github-discovery');
@@ -76,11 +77,11 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
     if (!hosts && operation === 'update') {
       const installedHosts = () => HOSTS.filter(host => deps.readPin(descriptorFor(host), env)?.state === 'installed');
       let eligible = installedHosts();
-      if (!eligible.length) { console.log('No installed kits to update'); return 0; }
+      if (!eligible.length) { ui.info('No installed kits to update', { plain: !visual }); return 0; }
       if (!process.stdin.isTTY || !process.stdout.isTTY || args.includes('--json')) throw new Error('choose hosts with --target');
       if (!readonly) releaseLock = deps.lockSources(env);
       eligible = installedHosts();
-      if (!eligible.length) { console.log('No installed kits to update'); return 0; }
+      if (!eligible.length) { ui.info('No installed kits to update', { plain: !visual }); return 0; }
       const selection = await deps.selectInstalledTargets(eligible);
       if (selection.code) return selection.code;
       hosts = selection.targets;
@@ -154,7 +155,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         if (code === 1 || exitCode === 1) exitCode = 1;
         else if (code) exitCode = code;
       } catch {
-        console.error(`zak kit (${descriptor.host}): source-bound operation failed; retained state must be inspected before retrying`);
+        ui.error(`zak kit (${descriptor.host}): source-bound operation failed; retained state must be inspected before retrying`, { plain: !visual });
         exitCode = 1;
       } finally { handle?.cleanup(); }
     }
@@ -162,7 +163,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
     return exitCode;
   } catch (error) {
     if (!sessionStarted) throw error;
-    console.error(`zak: ${error.message}`);
+    ui.error(`zak: ${error.message}`);
     return 1;
   } finally {
     picker?.cleanup(); releaseLock?.();

@@ -1,9 +1,6 @@
 import { PassThrough } from 'node:stream';
-import { multiselect, isCancel, outro } from '@clack/prompts';
-export function finishKitSession(code) {
-  outro(code === 130 ? 'Selection cancelled.' : code ? `Finished with exit ${code}; review the messages above.` : 'Done.');
-}
-const LABELS = { omp: 'OMP', pi: 'Pi', codex: 'Codex', claude: 'Claude Code' };
+import { circleMultiselect, isCancel, outro, HOST_LABELS } from './ui/terminal-ui.mjs';
+export { finishSession as finishKitSession, reportMessage } from './ui/terminal-ui.mjs';
 export async function selectInstalledTargets(hosts, { input = process.stdin, output = process.stdout } = {}) {
   const source = input, raw = source.isRaw, flowing = source.readableFlowing;
   const controller = new AbortController();
@@ -19,9 +16,9 @@ export async function selectInstalledTargets(hosts, { input = process.stdin, out
   output.on('error', onError);
   try {
     source.pipe(input);
-    const selection = await multiselect({
+    const selection = await circleMultiselect({
       message: 'Select installed kits to update',
-      options: hosts.map(value => ({ value, label: LABELS[value] })),
+      options: hosts.map(value => ({ value, label: HOST_LABELS[value] })),
       initialValues: [], required: true,
       input, output, signal: controller.signal,
     });

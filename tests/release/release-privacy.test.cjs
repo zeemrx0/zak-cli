@@ -46,6 +46,12 @@ test('configured archive has runtime closure and excludes identity/token canarie
   const probe = spawnSync(process.execPath, [path.join(packed, 'scripts/zak.cjs'), '--help'], { encoding: 'utf8' });
   assert.equal(probe.status, 0); assert.equal(probe.stdout.includes('--repo'), false);
   assert.equal(fs.existsSync(path.join(packed, 'agents')), false);
+  assert.equal(fs.existsSync(path.join(packed, 'node_modules')), false);
+  const uiProbe = spawnSync(process.execPath, ['-e',
+    "const ui = require('./src/zak/cli-ui'); const picker = require('./src/zak/kit-update-picker'); ui.success('UI ready'); picker.finishKitSession(0);"],
+    { cwd: packed, encoding: 'utf8' });
+  assert.equal(uiProbe.status, 0, uiProbe.stderr);
+  assert.equal(uiProbe.stdout, 'UI ready\nDone.\n');
   for (const command of [['update'], ['kit', 'update']]) {
     const empty = spawnSync(process.execPath, [path.join(packed, 'scripts/zak.cjs'), ...command, packed], {
       encoding: 'utf8', env: { ...process.env, HOME: f.root, XDG_DATA_HOME: path.join(f.root, 'data') },

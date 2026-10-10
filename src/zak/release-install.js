@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const ui = require('./cli-ui');
 const os = require('node:os');
 const path = require('node:path');
 const { selectRelease, downloadAsset } = require('../release/release-download');
@@ -15,7 +16,7 @@ async function installRelease(source, env = process.env) {
     const metadata = require(path.join(pkg, 'package.json'));
     if (metadata.name !== 'zak-cli' || `v${metadata.version}` !== release.tag_name) throw new Error('CLI release identity mismatch');
     const result = installCli(pkg, renderBootstrap(pkg, hash(bytes)), source.repository, source.transport, env);
-    console.log(`zak ${result.version} ${result.changed ? 'installed' : 'already installed'}`);
+    ui.success(`zak ${result.version} ${result.changed ? 'installed' : 'already installed'}`);
     return 0;
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }

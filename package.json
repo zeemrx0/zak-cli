@@ -15,15 +15,21 @@
     "zak": "scripts/zak.cjs"
   },
   "scripts": {
+    "pretest": "node scripts/build/build-update-picker.cjs",
     "test": "node --test tests/release/*.test.cjs",
     "build": "node scripts/build/build-release.cjs"
   },
   "files": [
     "src/",
+    "dist/installer/update-picker.cjs",
     "scripts/zak.cjs",
     "scripts/install-zak.cjs",
     "scripts/release/install.sh.template",
     "LICENSE",
     "README.md"
-  ]
+  ],
+  "devDependencies": {
+    "@clack/prompts": "1.8.1",
+    "esbuild": "0.25.10"
+  }
 }

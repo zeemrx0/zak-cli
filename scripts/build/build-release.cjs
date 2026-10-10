@@ -9,13 +9,15 @@ const { STABLE, BETA, releaseRepository } = require('../../src/release/release-m
 const { renderBootstrap } = require('../../src/release/bootstrap-template');
 const { unpack } = require('../../src/release/archive-package');
 const { buildConfig } = require('../../src/zak/kit-source-config');
+const { buildUpdatePicker } = require('./build-update-picker.cjs');
 const RUNTIME = ['scripts/zak.cjs', 'scripts/install-zak.cjs', 'src/zak/zak-cli.js',
   'src/zak/cli-uninstall.js', 'src/release/release-download.js', 'scripts/release/install.sh.template',
   'src/zak/kit-lifecycle.js', 'src/zak/kit-source-config.js', 'src/zak/github-discovery.js',
   'src/zak/kit-source-pins.js', 'src/zak/kit-private-state.js', 'src/zak/kit-target-locator.js',
-  'src/zak/kit-control-runner.js', 'src/zak/kit-update-picker.js', 'src/zak/kit-snapshot.js', 'src/zak/pinned-source-refresh.js'];
+  'src/zak/kit-control-runner.js', 'src/zak/kit-update-picker.js', 'dist/installer/update-picker.cjs', 'src/zak/kit-snapshot.js', 'src/zak/pinned-source-refresh.js'];
 function buildRelease(root = path.resolve(__dirname, '../..'), out = path.join(root, 'dist/release'), env = process.env) {
   assertNode();
+  buildUpdatePicker(root);
   let pkg, lock;
   try {
     pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json')));

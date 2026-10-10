@@ -1,59 +1,58 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PassThrough } = require('node:stream');
+const { stripVTControlCharacters } = require('node:util');
 const { selectInstalledTargets } = require('../../src/zak/kit-update-picker');
 function fixture() {
   const input = new PassThrough(), output = new PassThrough();
+  input.pause(); input.isTTY = true; output.isTTY = true;
+  output.columns = 80; output.rows = 24;
+  const modes = [];
+  input.setRawMode = value => { modes.push(value); input.isRaw = value; };
   let text = '';
   output.on('data', chunk => { text += chunk; });
-  return { input, output, text: () => text };
+  return { input, output, modes, text: () => stripVTControlCharacters(text) };
 }
-test('picker lists only supplied installed hosts and supports multiple choices', async () => {
+test('Clack picker lists only installed hosts and supports multiple choices', async () => {
   const f = fixture();
   const selection = selectInstalledTargets(['pi', 'claude'], f);
-  assert.match(f.text(), /1\. Pi\n.*2\. Claude Code/);
-  assert.doesNotMatch(f.text(), /OMP|Codex/);
-  f.input.write(' 2, 1, 2 \n');
-  assert.deepEqual(await selection, { code: 0, targets: ['claude', 'pi'] });
-  assert.equal(f.input.listenerCount('data'), 0);
+  assert.match(f.text(), /Pi/);
+  assert.match(f.text(), /Claude Code/);
+  assert.doesNotMatch(f.text(), /OMP|Codex|Choose numbers/);
+  f.input.write(' \x1b[B \r');
+  assert.deepEqual(await selection, { code: 0, targets: ['pi', 'claude'] });
+  assert.equal(f.input.listenerCount('keypress'), 0);
+  assert.equal(f.output.listenerCount('resize'), 0);
+  assert.equal(f.input.isRaw, false);
 });
-test('blank, malformed and out-of-range choices retry without selecting an unlisted host', async () => {
-  const f = fixture(), selection = selectInstalledTargets(['codex'], f);
-  for (const value of ['', '0', '2', '-1', '1x', '1,', '1.0']) f.input.write(value + '\n');
-  assert.equal(f.text().split('Choose at least one number').length - 1, 7);
-  f.input.write('1\n');
-  assert.deepEqual(await selection, { code: 0, targets: ['codex'] });
+test('empty confirmation stays active until an installed host is selected', async () => {
+  const f = fixture(), pending = selectInstalledTargets(['codex'], f);
+  f.input.write('\r');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(f.text(), /select at least one/i);
+  f.input.write(' \r');
+  assert.deepEqual(await pending, { code: 0, targets: ['codex'] });
 });
-test('EOF and terminal Ctrl+C cancel selection and release input listeners', async () => {
+test('EOF and Ctrl+C cancel and restore stream state', async () => {
   for (const interrupt of [false, true]) {
-    const f = fixture(), modes = [];
-    if (interrupt) {
-      f.input.isTTY = true; f.output.isTTY = true;
-      f.input.setRawMode = value => { modes.push(value); f.input.isRaw = value; };
-    }
-    const selection = selectInstalledTargets(['pi'], f);
+    const f = fixture(), pending = selectInstalledTargets(['pi'], f);
     if (interrupt) f.input.write('\x03'); else f.input.end();
-    assert.deepEqual(await selection, { code: 130, targets: [] });
+    assert.deepEqual(await pending, { code: 130, targets: [] });
     assert.equal(f.input.listenerCount('keypress'), 0);
     assert.equal(f.input.listenerCount('end'), 0);
-    if (interrupt) {
-      assert.deepEqual(modes, [true, false]);
-      assert.equal(f.input.isRaw, false);
-      assert.equal(f.output.listenerCount('resize'), 0);
-    } else assert.equal(f.input.listenerCount('data'), 0);
+    assert.equal(f.output.listenerCount('resize'), 0);
+    assert.equal(f.input.isRaw, false);
+    if (interrupt) assert.equal(f.input.isPaused(), true);
+    assert.match(f.text(), /└/);
   }
 });
-test('terminal input remains usable by a subsequent installer prompt', async () => {
-  const f = fixture(), modes = [];
-  f.input.isTTY = true; f.output.isTTY = true; f.input.setRawMode = value => modes.push(value);
-  const first = selectInstalledTargets(['pi'], f);
-  f.input.write('1\r');
+test('successful selection continues into the next prompt without a final outro', async () => {
+  const f = fixture(), first = selectInstalledTargets(['pi'], f);
+  f.input.write(' \r');
   assert.deepEqual(await first, { code: 0, targets: ['pi'] });
-  const readline = require('node:readline');
-  const rl = readline.createInterface({ input: f.input, output: f.output, terminal: true });
-  const answer = new Promise(resolve => rl.question('Installer confirmation: ', resolve));
-  f.input.write('yes\r');
-  assert.equal(await answer, 'yes');
-  rl.close();
-  assert.deepEqual(modes, [true, false, true, false]);
+  assert.doesNotMatch(f.text(), /Update cancelled/);
+  const second = selectInstalledTargets(['claude'], f);
+  f.input.write(' \r');
+  assert.deepEqual(await second, { code: 0, targets: ['claude'] });
+  assert.equal(f.input.listenerCount('keypress'), 0);
 });

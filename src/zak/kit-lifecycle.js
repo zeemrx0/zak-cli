@@ -5,7 +5,7 @@ const { discoverSource } = require('./github-discovery');
 const { validateConfig } = require('./kit-source-config');
 const { kitSnapshot, pinnedSnapshot } = require('./kit-snapshot');
 const { runControlled } = require('./kit-control-runner');
-const { selectInstalledTargets } = require('./kit-update-picker');
+const { selectInstalledTargets, finishKitSession } = require('./kit-update-picker');
 const { refreshPinnedSource } = require('./pinned-source-refresh');
 const { compatibleDescriptor, readPin, writePin, removePin, lockSources } = require('./kit-source-pins');
 const HOSTS = ['omp', 'pi', 'codex', 'claude'];
@@ -65,11 +65,12 @@ function legacy(descriptor) {
 async function kitLifecycle(operation, options, args, config, env = process.env, dependencies = {}) {
   if (!['install', 'update', 'check', 'uninstall'].includes(operation)) throw new Error('invalid kit lifecycle operation');
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
-    readPin, writePin, removePin, lockSources, refreshPinnedSource, selectInstalledTargets, ...dependencies };
+    readPin, writePin, removePin, lockSources, refreshPinnedSource, selectInstalledTargets, finishKitSession, ...dependencies };
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
   const operationFlags = { install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
-  let releaseLock, picker;
+  let releaseLock, picker, sessionStarted = false, sessionExit = 1;
+  const visual = !args.includes("--json") && !!process.stdout.isTTY;
   try {
     let hosts = parsed.hosts;
     if (!hosts && operation === 'update') {
@@ -98,8 +99,9 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
           if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
           picker = await deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, env);
         }
+        sessionStarted = visual;
         const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
-        if (selection.code) return selection.code;
+        if (selection.code) { sessionExit = selection.code; return selection.code; }
         hosts = selection.targets;
       }
     }
@@ -135,6 +137,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         const pending = { schema: 1, descriptor, source, snapshot: handle.snapshot, state: 'pending', operation };
         const forwarded = [...parsed.rest, '--target', descriptor.host,
           ...operationFlags];
+        sessionStarted = visual;
         const result = await deps.runControlled(handle.pkg, forwarded, { env, descriptor,
           onPrepare(actual) {
             if (!compatibleDescriptor(actual, descriptor)) throw new Error('installer target mismatch');
@@ -155,7 +158,15 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         exitCode = 1;
       } finally { handle?.cleanup(); }
     }
+    sessionExit = exitCode;
     return exitCode;
-  } finally { picker?.cleanup(); releaseLock?.(); }
+  } catch (error) {
+    if (!sessionStarted) throw error;
+    console.error(`zak: ${error.message}`);
+    return 1;
+  } finally {
+    picker?.cleanup(); releaseLock?.();
+    if (sessionStarted) deps.finishKitSession(sessionExit);
+  }
 }
 module.exports = { kitLifecycle, targetArgs, compatible };

@@ -43,7 +43,13 @@ gh auth login
 ```
 
 Without GitHub CLI or a login, new installations use the public kit.
-Authentication or access errors stop the operation instead of switching kits.
+On authentication or repository-access failures, `zak` tries the other saved
+`github.com` accounts until one passes source verification. The selected account
+is used for that operation's release downloads without changing the globally
+active `gh` account. Tokens are never written to installation records.
+Explicit `GH_TOKEN` or `GITHUB_TOKEN` credentials disable saved-account fallback.
+Network failures, rate limits, and source identity mismatches stop the operation.
+If no account has access, the operation stops instead of switching kits.
 Existing installations retain their kit source.
 
 Append `--global` for user-level guidance. Otherwise, commands apply to the current

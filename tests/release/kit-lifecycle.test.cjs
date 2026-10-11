@@ -37,6 +37,52 @@ function fixture(t) {
   }
   return { root, env, descriptor, pins, events, deps, pin, run };
 }
+test('selected credentials reach downloads but not installer children or receipts', async t => {
+  for (const operation of ['install', 'update']) {
+    const f = fixture(t), privateSource = { ...source, distribution: 'private', transport: 'gh', repositoryId: 42, ownerId: 7 };
+    if (operation === 'update') f.pin({ source: privateSource });
+    const resolve = (_input, options) => {
+      options.onAuthenticated({ ...options.env, GH_TOKEN: 'scoped-canary' });
+      return privateSource;
+    };
+    f.deps.discoverSource = resolve; f.deps.refreshPinnedSource = resolve;
+    const normalSnapshot = f.deps.kitSnapshot, normalRun = f.deps.runControlled;
+    f.deps.kitSnapshot = (candidate, options, env) => {
+      assert.equal(env.GH_TOKEN, 'scoped-canary'); return normalSnapshot();
+    };
+    f.deps.runControlled = (pkg, args, callbacks) => {
+      assert.equal(callbacks.env.GH_TOKEN, undefined); return normalRun(pkg, args, callbacks);
+    };
+    assert.equal(await f.run(operation), 0);
+    assert.equal(f.env.GH_TOKEN, undefined);
+    assert.ok(!JSON.stringify([...f.pins.values()]).includes('scoped-canary'));
+  }
+});
+test('release access failures try another account before installer mutation', async t => {
+  const { withGithubAccountsAsync } = require('../../src/zak/github-accounts');
+  for (const operation of ['install', 'update']) {
+    const f = fixture(t), privateSource = { ...source, transport: 'gh', distribution: 'private', repositoryId: 42, ownerId: 7 };
+    if (operation === 'update') f.pin({ source: privateSource });
+    let resolutions = 0, downloads = 0, mutations = 0;
+    f.deps.discoverSource = f.deps.refreshPinnedSource = () => { resolutions++; return privateSource; };
+    f.deps.withGithubAccountsAsync = (probe, options) => withGithubAccountsAsync(probe, { ...options,
+      run(_command, args) {
+        assert.ok(!args.includes('switch'));
+        return { status: 0, stdout: args.includes('--json') ?
+          JSON.stringify({ hosts: { 'github.com': [{ login: 'owner' }] } }) : 'release-access-token' };
+      } });
+    const normalSnapshot = f.deps.kitSnapshot, normalRun = f.deps.runControlled;
+    f.deps.kitSnapshot = (_source, _options, env) => {
+      downloads++;
+      if (!env.GH_TOKEN) throw Object.assign(new Error('release access denied'), { accountAccess: true });
+      assert.equal(env.GH_TOKEN, 'release-access-token'); return normalSnapshot();
+    };
+    f.deps.runControlled = (...args) => { mutations++; return normalRun(...args); };
+    assert.equal(await f.run(operation), 0);
+    assert.equal(resolutions, 2); assert.equal(downloads, 2); assert.equal(mutations, 1);
+    assert.ok(!JSON.stringify([...f.pins.values()]).includes('release-access-token'));
+  }
+});
 test('source parser removes repository selection and preserves omitted defaults', () => {
   assert.deepEqual(sourceArgs(['--target', 'pi']), { source: {}, rest: ['--target', 'pi'] });
   for (const args of [['--repo', 'fixture/kit'], ['--repo=fixture/kit']]) assert.throws(() => sourceArgs(args), /no longer/);

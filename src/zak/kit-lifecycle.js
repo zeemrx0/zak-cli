@@ -8,6 +8,7 @@ const { kitSnapshot, pinnedSnapshot } = require('./kit-snapshot');
 const { runControlled } = require('./kit-control-runner');
 const { selectInstalledTargets, finishKitSession } = require('./kit-update-picker');
 const { refreshPinnedSource } = require('./pinned-source-refresh');
+const { withGithubAccountsAsync } = require('./github-accounts');
 const { compatibleDescriptor, readPin, writePin, removePin, lockSources } = require('./kit-source-pins');
 const HOSTS = ['omp', 'pi', 'codex', 'claude'];
 function targetArgs(args) {
@@ -66,7 +67,7 @@ function legacy(descriptor) {
 async function kitLifecycle(operation, options, args, config, env = process.env, dependencies = {}) {
   if (!['install', 'update', 'check', 'uninstall'].includes(operation)) throw new Error('invalid kit lifecycle operation');
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
-    readPin, writePin, removePin, lockSources, refreshPinnedSource, selectInstalledTargets, finishKitSession, ...dependencies };
+    readPin, writePin, removePin, lockSources, refreshPinnedSource, withGithubAccountsAsync, selectInstalledTargets, finishKitSession, ...dependencies };
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
   const operationFlags = { install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
@@ -96,9 +97,13 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         if (pin) picker = deps.pinnedSnapshot(pin, env);
         else {
           if (operation !== 'install') throw new Error('no trusted source pin; use the original installer to remove legacy targets');
-          const source = deps.discoverSource(validateConfig(config), { env, channel: options.channel || 'stable' });
-          if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
-          picker = await deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, env);
+          picker = await deps.withGithubAccountsAsync(async (accountEnv, run) => {
+            let downloadEnv = accountEnv;
+            const source = deps.discoverSource(validateConfig(config), { env: accountEnv, run, tryAccounts: false,
+              channel: options.channel || 'stable', onAuthenticated(selected) { downloadEnv = selected; } });
+            if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
+            return deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, downloadEnv);
+          }, { env });
         }
         sessionStarted = visual;
         const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
@@ -126,15 +131,24 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
       let handle;
       try {
         let source;
-        if (pin) source = compatible(pin.source, options, operation);
-        else {
-          source = deps.discoverSource(validateConfig(config), { env, channel: options.channel || 'stable' });
-          if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
-          source = { ...source, transport: options.transport || source.transport };
-        }
         const exact = pin && (pin.state !== 'installed' || operation === 'check' || operation === 'uninstall' || operation === 'install');
-        if (pin && !exact) source = deps.refreshPinnedSource(source, { env });
-        handle = exact ? deps.pinnedSnapshot(pin, env) : await deps.kitSnapshot(source, { readonly }, env);
+        if (exact) {
+          source = compatible(pin.source, options, operation);
+          handle = deps.pinnedSnapshot(pin, env);
+        } else {
+          handle = await deps.withGithubAccountsAsync(async (accountEnv, run) => {
+            let downloadEnv = accountEnv;
+            const auth = { env: accountEnv, run, tryAccounts: false,
+              onAuthenticated(selected) { downloadEnv = selected; } };
+            if (pin) source = deps.refreshPinnedSource(compatible(pin.source, options, operation), auth);
+            else {
+              source = deps.discoverSource(validateConfig(config), { ...auth, channel: options.channel || 'stable' });
+              if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
+              source = { ...source, transport: options.transport || source.transport };
+            }
+            return deps.kitSnapshot(source, { readonly }, downloadEnv);
+          }, { env });
+        }
         const pending = { schema: 1, descriptor, source, snapshot: handle.snapshot, state: 'pending', operation };
         const forwarded = [...parsed.rest, '--target', descriptor.host,
           ...operationFlags];

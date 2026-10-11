@@ -27,7 +27,7 @@ test('private kit transport uses gh only and refuses anonymous fallback', async 
   assert.equal(spawnSync('tar', ['-czf', archive, '-C', path.dirname(pkg), 'package']).status, 0);
   const release = { tag_name: 'v8.0.0', draft: false, prerelease: false, published_at: '2026-10-08T00:00:00Z', assets: [{ name: 'z-agent-kit-v8.0.0.tgz', digest: `sha256:${hash(fs.readFileSync(archive))}` }] };
   fs.writeFileSync(path.join(dir, 'release.json'), JSON.stringify(release));
-  const fake = `#!${process.execPath}\nconst fs=require('node:fs'),p=require('node:path'),a=process.argv.slice(2);if(process.env.GH_FAIL)process.exit(1);if(a[0]==='api')process.stdout.write(fs.readFileSync(p.join(process.env.GH_FIXTURE,'release.json')));else if(a[0]==='release'&&a[1]==='download')process.stdout.write(fs.readFileSync(p.join(process.env.GH_FIXTURE,'kit.tgz')));else process.exit(1);`;
+  const fake = `#!${process.execPath}\nconst fs=require('node:fs'),p=require('node:path'),a=process.argv.slice(2);if(a[0]==='auth'){process.stdout.write(a[1]==='token'?'asset-access-token':JSON.stringify({hosts:{'github.com':[{login:'owner'}]}}));process.exit(0);}if(process.env.GH_FAIL_DOWNLOAD&&a[0]==='release'&&process.env.GH_TOKEN!=='asset-access-token'){process.stderr.write('HTTP 403: Forbidden (https://api.github.com/repos/fixture/private-kit/releases/assets/1)');process.exit(1);}if(process.env.GH_FAIL){process.stderr.write(process.env.GH_FAIL_MESSAGE||'');process.exit(1);}if(a[0]==='api')process.stdout.write(fs.readFileSync(p.join(process.env.GH_FIXTURE,'release.json')));else if(a[0]==='release'&&a[1]==='download')process.stdout.write(fs.readFileSync(p.join(process.env.GH_FIXTURE,'kit.tgz')));else process.exit(1);`;
   fs.writeFileSync(path.join(bin, 'gh'), fake, { mode: 0o755 });
   const env = { ...process.env, HOME: home, PATH: bin + ':' + process.env.PATH, GH_FIXTURE: dir };
   for (const key of ['ZAK_ROOT', 'XDG_DATA_HOME', 'ZAK_RELEASE_API_URL', 'ZAK_RELEASE_BASE_URL']) delete env[key];
@@ -36,5 +36,21 @@ test('private kit transport uses gh only and refuses anonymous fallback', async 
   assert.equal(fs.readFileSync(path.join(installed, 'scripts/ship-kit.cjs'), 'utf8'),
     "require('node:fs').writeFileSync('.private-kit', 'authenticated');");
   await assert.rejects(kitPackage(source, true, { ...env, GH_FAIL: '1' }), /gh request failed/);
+  for (const [message, retry] of [['gh: denied (HTTP 403)', true], ['gh: missing (HTTP 404)', true],
+    ['gh: API rate limit exceeded (HTTP 403)', false], ['gh: unavailable (HTTP 503)', false]]) {
+    await assert.rejects(kitPackage(source, true, { ...env, GH_FAIL: '1', GH_FAIL_MESSAGE: message }), error => {
+      assert.equal(error.accountAccess, retry); assert.ok(!error.message.includes(message)); return true;
+    });
+  }
   await assert.rejects(kitPackage(source, true, { ...env, ZAK_RELEASE_BASE_URL: 'http://127.0.0.1:1' }), /overrides/);
+  const { withGithubAccountsAsync } = require('../../src/zak/github-accounts');
+  const accountEnv = { ...env, GH_FAIL_DOWNLOAD: '1' };
+  delete accountEnv.GH_TOKEN; delete accountEnv.GITHUB_TOKEN;
+  let selected, attempts = 0;
+  const downloaded = await withGithubAccountsAsync(candidate => {
+    attempts++; return kitPackage(source, true, candidate);
+  }, { env: accountEnv, onAuthenticated(candidate) { selected = candidate; } });
+  assert.equal(downloaded, installed); assert.equal(attempts, 2);
+  assert.equal(selected.GH_TOKEN, 'asset-access-token');
+  assert.equal(accountEnv.GH_TOKEN, undefined);
 });

@@ -1,4 +1,5 @@
 const { spawnSync } = require('node:child_process');
+const { accountAccessFailure, withGithubAccounts } = require('./github-accounts');
 const { validateGithubRepository } = require('../release/release-metadata');
 const { validateConfig, repositoryFromUrl } = require('./kit-source-config');
 function failure(code) {
@@ -6,7 +7,10 @@ function failure(code) {
   error.code = code;
   return error;
 }
-function discoverSource(input, { env = process.env, run = spawnSync, now = Date.now,
+function discoverSource(input, options = {}) {
+  return withGithubAccounts((env, run) => discoverWithAccount(input, { ...options, env, run }), options);
+}
+function discoverWithAccount(input, { env = process.env, run = spawnSync, now = Date.now,
   channel = 'stable', deadlineMs = 60000 } = {}) {
   const config = validateConfig(input), started = now();
   if (!['stable', 'beta'].includes(channel) || !Number.isSafeInteger(deadlineMs) || deadlineMs < 1)
@@ -29,7 +33,8 @@ function discoverSource(input, { env = process.env, run = spawnSync, now = Date.
   if (auth.status !== 0) {
     if (!(env.GH_TOKEN || env.GITHUB_TOKEN) && !auth.signal && /not logged into any GitHub hosts/i.test(String(auth.stderr)))
       return publicSource('login-unavailable');
-    throw failure('AUTHENTICATION');
+    const invalidToken = !auth.error && !auth.signal && /token[^\n]*(?:invalid|expired)|invalid[^\n]*token/i.test(String(auth.stderr));
+    throw Object.assign(failure('AUTHENTICATION'), { accountAccess: accountAccessFailure(auth) || invalidToken });
   }
   function api(endpoint) {
     const result = execute(['api', '--hostname', 'github.com', '--method', 'GET', '--include', endpoint]);
@@ -37,9 +42,10 @@ function discoverSource(input, { env = process.env, run = spawnSync, now = Date.
     const output = String(result.stdout || ''), separator = /\r?\n\r?\n/.exec(output);
     const header = separator ? output.slice(0, separator.index) : '';
     const status = /^HTTP\/[\d.]+\s+(\d{3})\b/.exec(header)?.[1];
-    if (status === '401') throw failure('AUTHENTICATION');
-    if (status === '403' || status === '429') throw failure('ACCESS_OR_RATE_LIMIT');
-    if (status !== '200' || result.status !== 0) throw failure('HTTP_OR_TRANSPORT');
+    const denied = code => Object.assign(failure(code), { accountAccess: accountAccessFailure(result) });
+    if (status === '401') throw denied('AUTHENTICATION');
+    if (status === '403' || status === '429') throw denied('ACCESS_OR_RATE_LIMIT');
+    if (status !== '200' || result.status !== 0) throw denied('HTTP_OR_TRANSPORT');
     try { return JSON.parse(output.slice(separator.index + separator[0].length)); }
     catch { throw failure('INVALID_RESPONSE'); }
   }

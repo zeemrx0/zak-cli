@@ -58,11 +58,11 @@ test('an explicitly empty variable disables private selection without repository
   const f = fixture({ value: variable({ value: '' }) });
   assert.equal(discoverSource(config, f).reason, 'private-source-disabled'); assert.equal(f.calls.length, 2);
 });
-test('missing variable, insufficient collaborator permission, rate limit, and outages never fallback', () => {
+test('access failures inspect saved accounts but never substitute the public kit', () => {
   for (const status of [401, 403, 404, 429, 500]) {
     const f = fixture({ value: response({ message: 'private-canary' }, status) });
     assert.throws(() => discoverSource(config, f), error => !error.message.includes('private-canary'));
-    assert.equal(f.calls.length, 2);
+    assert.equal(f.calls.length, [401, 403, 404].includes(status) ? 3 : 2);
   }
 });
 test('variable values are validated without exposing malformed addresses or names', () => {

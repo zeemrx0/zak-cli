@@ -1,6 +1,11 @@
 const { spawnSync } = require('node:child_process');
+const { accountAccessFailure, withGithubAccounts } = require('./github-accounts');
 const { validateGithubRepository } = require('../release/release-metadata');
-function refreshPinnedSource(source, { env = process.env, run = spawnSync } = {}) {
+function refreshPinnedSource(source, options = {}) {
+  if (source.distribution !== 'private') return source;
+  return withGithubAccounts((env, run) => refreshWithAccount(source, { env, run }), options);
+}
+function refreshWithAccount(source, { env = process.env, run = spawnSync } = {}) {
   if (source.distribution !== 'private') return source;
   let result, repo;
   try {
@@ -9,7 +14,10 @@ function refreshPinnedSource(source, { env = process.env, run = spawnSync } = {}
     if (result.error || result.signal || result.status !== 0) throw new Error('request failed');
     repo = JSON.parse(result.stdout);
     validateGithubRepository(repo.full_name);
-  } catch { throw new Error('pinned source access could not be verified; no fallback performed'); }
+  } catch {
+    throw Object.assign(new Error('pinned source access could not be verified; no fallback performed'),
+      { accountAccess: !!result && accountAccessFailure(result) });
+  }
   if (repo.id !== source.repositoryId || repo.owner?.id !== source.ownerId || repo.private !== true ||
       repo.fork !== false || repo.archived !== false || repo.disabled !== false)
     throw new Error('pinned source identity changed; no fallback performed');

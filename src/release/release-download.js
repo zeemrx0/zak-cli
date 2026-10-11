@@ -1,10 +1,13 @@
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
+const { accountAccessFailure } = require('../zak/github-accounts');
 const { STABLE, BETA, validateGithubRepository } = require('./release-metadata');
 const LIMIT = 128 * 1024 * 1024;
 function gh(args, env) {
   const result = spawnSync('gh', args, { env: { ...env, GH_PROMPT_DISABLED: '1' }, timeout: 60000, maxBuffer: LIMIT });
-  if (result.error || result.status !== 0) throw new Error('gh request failed; check authentication and repository access');
+  if (result.error || result.signal || result.status !== 0)
+    throw Object.assign(new Error('gh request failed; check authentication and repository access'),
+      { accountAccess: accountAccessFailure(result) });
   return result.stdout;
 }
 async function request(url) {

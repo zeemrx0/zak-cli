@@ -16,7 +16,7 @@ function fixture() {
 test('Clack picker lists only installed hosts and supports multiple choices', async () => {
   const f = fixture();
   const selection = selectInstalledTargets(['pi', 'claude'], f);
-  assert.match(f.text(), /○ Pi ‹/);
+  assert.match(f.text(), /❯ ○ Pi/);
   assert.match(f.text(), /○ Claude Code/);
   assert.doesNotMatch(f.text(), /◻|◼|\[ \]|\[\+\]/);
   assert.match(f.text(), /Space: select/);

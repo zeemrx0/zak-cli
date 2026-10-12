@@ -142,8 +142,8 @@ test('interactive selection forwards the same operation flags as application in 
       const args = [global ? '--global' : f.root, '--tier', 'general'];
       assert.equal(await f.run(operation, {}, args), 0);
       assert.deepEqual(calls, [
-        ...(operation === 'update' ? [] : [{ args: [...args, ...(flag ? [flag] : [])], mode: 'select' }]),
-        { args: [...args, '--target', 'pi', ...(flag ? [flag] : [])], mode: 'apply' },
+        ...(operation === 'update' ? [] : [{ args: [...args, ...(flag ? [flag, ...(['update', 'uninstall'].includes(operation) ? ['--force'] : [])] : [])], mode: 'select' }]),
+        { args: [...args, '--target', 'pi', ...(flag ? [flag, ...(['update', 'uninstall'].includes(operation) ? ['--force'] : [])] : [])], mode: 'apply' },
       ]);
     }
   }

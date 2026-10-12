@@ -12,7 +12,7 @@ const HELP = `zak — independent CLI and kit management
 Kit source: authorized GitHub discovery; existing targets retain their source.
 Options: --transport curl|gh, --channel stable|beta
 Private sources require authenticated gh transport. CLI releases contain no kits.
-Kit options: [project] --target omp,pi,codex,claude --tier <tiers> --global --json
+Kit options: [project] --target omp,pi,codex,claude --tier <tiers> --global (-g) --json
 self-update never changes installed kits; self-uninstall leaves kits and cache.
 Kit install/update retrieves verified releases independently of the CLI version.`;
 function kitArgs(operation, args) {

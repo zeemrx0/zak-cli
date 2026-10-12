@@ -22,8 +22,8 @@ function targetArgs(args) {
       if (hosts.some(host => !HOSTS.includes(host))) throw new Error('invalid kit targets');
       result.hosts = [...new Set(hosts)];
     } else {
-      result.rest.push(value);
-      if (value === '--global') result.scope = 'global';
+      result.rest.push(value === '-g' ? '--global' : value);
+      if (value === '--global' || value === '-g') result.scope = 'global';
       else if (value === '--dry-run') result.readonly = true;
       else if (value === '--tier' || value === '--no-tier') {
         const tier = args[++i];
@@ -69,7 +69,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
     readPin, writePin, removePin, lockSources, refreshPinnedSource, withGithubAccountsAsync, selectInstalledTargets, finishKitSession, ...dependencies };
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
-  const operationFlags = { install: [], update: ['--update'], check: ['--check'], uninstall: ['--uninstall'] }[operation];
+  const operationFlags = { install: [], update: ['--update', '--force'], check: ['--check'], uninstall: ['--uninstall', '--force'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
   let releaseLock, picker, sessionStarted = false, sessionExit = 1;
   const visual = !args.includes("--json") && !!process.stdout.isTTY;
@@ -151,7 +151,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         }
         const pending = { schema: 1, descriptor, source, snapshot: handle.snapshot, state: 'pending', operation };
         const forwarded = [...parsed.rest, '--target', descriptor.host,
-          ...operationFlags];
+          ...operationFlags.filter(flag => !parsed.rest.includes(flag))];
         sessionStarted = visual;
         const result = await deps.runControlled(handle.pkg, forwarded, { env, descriptor,
           onPrepare(actual) {

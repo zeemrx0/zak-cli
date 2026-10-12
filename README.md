@@ -52,7 +52,7 @@ Network failures, rate limits, and source identity mismatches stop the operation
 If no account has access, the operation stops instead of switching kits.
 Existing installations retain their kit source.
 
-Append `--global` for user-level guidance. Otherwise, commands apply to the current
+Append `--global` (or `-g`) for user-level guidance. Otherwise, commands apply to the current
 project or a supplied project path. Do not combine `--global` with a project path.
 Global installations require explicit tier selection.
 
@@ -62,7 +62,8 @@ Change an installed kit's channel with `zak kit update`.
 `--transport gh` supports authenticated downloads; private kits cannot use `--transport curl`.
 Do not change the transport of an existing installation.
 
-Edited files are preserved. Resolve reported conflicts before retrying an update or removal.
+Updates overwrite local edits to kit-managed files. Uninstall removes kit-managed files even when edited.
+Unrelated files, path safety checks, and ownership checks remain protected. Use `--dry-run` to preview either operation.
 Do not manually delete installation records or active-operation guards.
 For installations made with an older installer, remove the kit with its original
 installer, review any retained files, then install it with `zak`.

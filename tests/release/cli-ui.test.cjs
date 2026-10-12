@@ -48,13 +48,13 @@ test('session endings use the supplied stream for success, failure, and cancella
 });
 test('focus and circular checkbox selection remain independent and toggles are reversible', async () => {
   const f = fixture(true), pending = selectInstalledTargets(['pi', 'codex'], f);
-  assert.match(f.text(), /○ Pi ‹/);
+  assert.match(f.text(), /❯ ○ Pi/);
   f.input.write('\x1b[B');
-  assert.match(f.text(), /○ Codex ‹/);
+  assert.match(f.text(), /❯ ○ Codex/);
   f.input.write(' ');
-  assert.match(f.text(), /● Codex ‹/);
+  assert.match(f.text(), /❯ ● Codex/);
   f.input.write(' ');
-  assert.ok(f.text().lastIndexOf('○ Codex ‹') > f.text().lastIndexOf('● Codex ‹'));
+  assert.ok(f.text().lastIndexOf('❯ ○ Codex') > f.text().lastIndexOf('❯ ● Codex'));
   f.input.write('\x1b[A \r');
   assert.deepEqual(await pending, { code: 0, targets: ['pi'] });
 });

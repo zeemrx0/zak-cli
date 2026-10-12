@@ -113,7 +113,7 @@ test('check and dry-run never write source state or acquire persistent locks', a
     assert.equal(f.events.includes('pending'), false); assert.equal(f.events.includes('removed'), false);
   }
 });
-test('interactive selection forwards the same operation flags as application in project and global scope', async t => {
+test('CLI-owned circular selection preserves apply flags in project and global scope', async t => {
   for (const stream of [process.stdin, process.stdout]) {
     const previous = Object.getOwnPropertyDescriptor(stream, 'isTTY');
     Object.defineProperty(stream, 'isTTY', { value: true, configurable: true });
@@ -134,15 +134,15 @@ test('interactive selection forwards the same operation flags as application in 
         }
         return normal(pkg, args, callbacks);
       };
-      if (operation === 'update') f.deps.selectInstalledTargets = async hosts => {
-        assert.deepEqual(hosts, ['pi']);
+      f.deps.selectInstalledTargets = async (hosts, options = {}) => {
+        assert.deepEqual(hosts, operation === 'update' ? ['pi'] : ['omp', 'pi', 'codex', 'claude']);
+        assert.equal(options.operation || 'update', operation);
         assert.equal(f.events.includes('pending'), false);
-        return { code: 0, targets: hosts };
+        return { code: 0, targets: ['pi'] };
       };
       const args = [global ? '--global' : f.root, '--tier', 'general'];
       assert.equal(await f.run(operation, {}, args), 0);
       assert.deepEqual(calls, [
-        ...(operation === 'update' ? [] : [{ args: [...args, ...(flag ? [flag, ...(['update', 'uninstall'].includes(operation) ? ['--force'] : [])] : [])], mode: 'select' }]),
         { args: [...args, '--target', 'pi', ...(flag ? [flag, ...(['update', 'uninstall'].includes(operation) ? ['--force'] : [])] : [])], mode: 'apply' },
       ]);
     }
@@ -164,6 +164,27 @@ test('cancelled interactive update does not apply or write pending state', async
   assert.equal(f.events.includes('mutate'), false);
   assert.equal(f.events.at(-1), 'unlock');
 });
+test('all target pickers cancel before source access or mutation', async t => {
+  interactive(t);
+  for (const operation of ['install', 'check', 'uninstall']) {
+    const f = fixture(t);
+    f.deps.selectInstalledTargets = async () => ({ code: 130, targets: [] });
+    assert.equal(await f.run(operation, {}, [f.root]), 130);
+    for (const event of ['exact', 'discovery', 'download', 'pending', 'mutate'])
+      assert.equal(f.events.includes(event), false, `${operation}: ${event}`);
+    if (operation !== 'check') assert.equal(f.events.at(-1), 'unlock');
+  }
+});
+test('invalid target selections cannot cross the apply boundary', async t => {
+  interactive(t);
+  for (const targets of [null, [], ['pi', 'pi'], ['unknown']]) {
+    const f = fixture(t);
+    f.deps.selectInstalledTargets = async () => ({ code: 0, targets });
+    await assert.rejects(f.run('uninstall', {}, [f.root]), /invalid kit selection/);
+    assert.equal(f.events.includes('mutate'), false);
+    assert.equal(f.events.at(-1), 'unlock');
+  }
+});
 test('missing pins and legacy targets stop before downloads', async t => {
   const f = fixture(t);
   await assert.rejects(f.run('check'), /no trusted/);
@@ -177,6 +198,48 @@ test('empty post-uninstall roots and unrelated host configuration are not legacy
   fs.writeFileSync(path.join(f.descriptor.controlRoot, 'auth.json'), '{"fixture":true}');
   assert.equal(await f.run('install'), 0);
   assert.equal(fs.readFileSync(path.join(f.descriptor.controlRoot, 'auth.json'), 'utf8'), '{"fixture":true}');
+});
+test('reinstall accepts empty namespaced directory trees after successful uninstall', async t => {
+  for (const host of ['pi', 'omp', 'codex', 'claude']) {
+    for (const scope of ['project', 'global']) {
+      const f = fixture(t);
+      const descriptor = resolveTarget({ host, scope, project: f.root, env: f.env });
+      const args = [scope === 'global' ? '--global' : f.root, '--target', host];
+      const skill = path.join(descriptor.skillsRoot, 'z-html-style', 'references', 'styles');
+      const extension = path.join(descriptor.controlRoot, 'extensions', 'z-agent-kit');
+      fs.mkdirSync(skill, { recursive: true });
+      fs.mkdirSync(extension, { recursive: true });
+      f.pins.set(JSON.stringify(descriptor), { schema: 1, descriptor, source, snapshot, state: 'installed', operation: 'install' });
+      assert.equal(await f.run('uninstall', {}, args), 0);
+      assert.equal(f.pins.size, 0);
+      assert.equal(await f.run('install', {}, args), 0, `${host} ${scope}`);
+      assert.ok(fs.statSync(skill).isDirectory());
+    }
+  }
+});
+test('legacy inspection rejects retained files and symlinks inside namespaced trees', async t => {
+  for (const kind of ['file', 'hidden-file', 'empty-link', 'dangling-link']) {
+    const f = fixture(t);
+    const dir = path.join(f.descriptor.skillsRoot, 'z-html-style', 'references');
+    fs.mkdirSync(dir, { recursive: true });
+    if (kind.endsWith('link')) {
+      const target = path.join(f.root, 'outside');
+      if (kind === 'empty-link') fs.mkdirSync(target);
+      fs.symlinkSync(target, path.join(dir, 'link'));
+    } else fs.writeFileSync(path.join(dir, kind === 'hidden-file' ? '.retained' : 'style.md'), '');
+    await assert.rejects(f.run('install'), /legacy/);
+    assert.equal(f.events.includes('download'), false);
+  }
+});
+test('legacy inspection fails closed on excessive depth and preserves lock and startup evidence', async t => {
+  for (const kind of ['deep-tree', 'lock', 'startup']) {
+    const f = fixture(t);
+    fs.mkdirSync(f.descriptor.controlRoot, { recursive: true });
+    if (kind === 'deep-tree') fs.mkdirSync(path.join(f.descriptor.skillsRoot, 'z-empty', ...Array(66).fill('nested')), { recursive: true });
+    else fs.writeFileSync(kind === 'lock' ? f.descriptor.lockPath : path.join(f.descriptor.controlRoot, 'AGENTS.md'), 'z-agent-kit');
+    await assert.rejects(f.run('install'), /legacy/);
+    assert.equal(f.events.includes('download'), false);
+  }
 });
 test('explicit source conflicts fail while compatible updates can change channel', async t => {
   const f = fixture(t); f.pin();

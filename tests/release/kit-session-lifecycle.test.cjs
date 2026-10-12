@@ -40,7 +40,8 @@ test('interactive source conflict reports its diagnostic before closing', async 
   const dependencies = {
     readPin: descriptor => ({ descriptor, source, state: 'installed', snapshot: {} }),
     pinnedSnapshot: () => ({ pkg: '/fixture', cleanup() {} }),
-    runControlled: async () => { events.push('select'); return { code: 0, targets: ['pi'] }; },
+    selectInstalledTargets: async () => { events.push('select'); return { code: 0, targets: ['pi'] }; },
+    runControlled: async () => { throw Error('source conflict must stop before apply'); },
     finishKitSession: code => events.push(['end', code]),
   };
   assert.equal(await kitLifecycle('check', { transport: 'gh' }, [home], config, { HOME: home }, dependencies), 1);

@@ -44,6 +44,14 @@ function compatible(source, options, operation) {
     throw new Error('channel changes require an explicit update');
   return { ...source, channel: options.channel || source.channel };
 }
+// Uninstall removes owned files, not their parent directories. Empty trees do
+// not establish ownership; files, links, and uninspectable trees still do.
+function legacyContent(file, budget = { remaining: 4096 }, depth = 0) {
+  if (depth > 64 || --budget.remaining < 0) return true;
+  const entry = fs.lstatSync(file);
+  if (!entry.isDirectory() || entry.isSymbolicLink()) return true;
+  return fs.readdirSync(file).some(name => legacyContent(path.join(file, name), budget, depth + 1));
+}
 function legacy(descriptor) {
   const roots = new Set([descriptor.controlRoot, descriptor.skillsRoot,
     ...['skills', 'rules', 'z-rules', 'agents', 'extensions'].map(rel => path.join(descriptor.controlRoot, rel))]);
@@ -52,7 +60,7 @@ function legacy(descriptor) {
     const entry = fs.lstatSync(root, { throwIfNoEntry: false });
     if (!entry) continue;
     if (entry.isSymbolicLink() || !entry.isDirectory()) throw new Error('unsafe legacy target inspection');
-    if (fs.readdirSync(root).some(name => /^z[-_]|^\.z-/.test(name))) evidence = true;
+    if (fs.readdirSync(root).some(name => /^z[-_]|^\.z-/.test(name) && legacyContent(path.join(root, name)))) evidence = true;
   }
   const startups = [path.join(descriptor.controlRoot, 'AGENTS.md'), path.join(descriptor.controlRoot, 'APPEND_SYSTEM.md')];
   if (descriptor.project) startups.push(path.join(descriptor.project, 'AGENTS.md'));
@@ -71,7 +79,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
   const operationFlags = { install: [], update: ['--update', '--force'], check: ['--check'], uninstall: ['--uninstall', '--force'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
-  let releaseLock, picker, sessionStarted = false, sessionExit = 1;
+  let releaseLock, sessionStarted = false, sessionExit = 1;
   const visual = !args.includes("--json") && !!process.stdout.isTTY;
   try {
     let hosts = parsed.hosts;
@@ -91,24 +99,12 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
       if (!readonly) releaseLock = deps.lockSources(env);
       if (!hosts) {
         if (!process.stdin.isTTY || !process.stdout.isTTY || args.includes('--json')) throw new Error('choose hosts with --target');
-        const descriptors = HOSTS.map(descriptorFor);
-        const pins = descriptors.map(descriptor => deps.readPin(descriptor, env));
-        const pin = pins.find(Boolean);
-        if (pin) picker = deps.pinnedSnapshot(pin, env);
-        else {
-          if (operation !== 'install') throw new Error('no trusted source pin; use the original installer to remove legacy targets');
-          picker = await deps.withGithubAccountsAsync(async (accountEnv, run) => {
-            let downloadEnv = accountEnv;
-            const source = deps.discoverSource(validateConfig(config), { env: accountEnv, run, tryAccounts: false,
-              channel: options.channel || 'stable', onAuthenticated(selected) { downloadEnv = selected; } });
-            if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
-            return deps.kitSnapshot({ ...source, transport: options.transport || source.transport }, { readonly: true }, downloadEnv);
-          }, { env });
-        }
-        sessionStarted = visual;
-        const selection = await deps.runControlled(picker.pkg, [...parsed.rest, ...operationFlags], { mode: 'select', env });
-        if (selection.code) { sessionExit = selection.code; return selection.code; }
+        const selection = await deps.selectInstalledTargets(HOSTS, { operation });
+        if (selection.code) return selection.code;
         hosts = selection.targets;
+        if (!Array.isArray(hosts) || !hosts.length || new Set(hosts).size !== hosts.length ||
+            hosts.some(host => !HOSTS.includes(host))) throw new Error('invalid kit selection');
+        sessionStarted = visual;
       }
     }
     const descriptors = hosts.map(descriptorFor);
@@ -180,7 +176,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
     ui.error(`zak: ${error.message}`);
     return 1;
   } finally {
-    picker?.cleanup(); releaseLock?.();
+    releaseLock?.();
     if (sessionStarted) deps.finishKitSession(sessionExit);
   }
 }

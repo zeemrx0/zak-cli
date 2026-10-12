@@ -28,6 +28,21 @@ test('Clack picker lists only installed hosts and supports multiple choices', as
   assert.equal(f.output.listenerCount('resize'), 0);
   assert.equal(f.input.isRaw, false);
 });
+test('all lifecycle operations render circles and use operation-specific cancellation', async () => {
+  for (const operation of ['install', 'check', 'uninstall']) {
+    const f = fixture();
+    const pending = selectInstalledTargets(['omp', 'pi', 'codex', 'claude'], { ...f, operation });
+    assert.match(f.text(), new RegExp(`Select targets for ${operation}`));
+    assert.match(f.text(), /❯ ○ OMP/);
+    assert.doesNotMatch(f.text(), /[□☐☑◻◼]/);
+    f.input.write(' ');
+    assert.match(f.text(), /❯ ● OMP/);
+    f.input.write('\x03');
+    assert.deepEqual(await pending, { code: 130, targets: [] });
+    assert.match(f.text(), new RegExp(`${operation[0].toUpperCase()}${operation.slice(1)} cancelled; no kits changed`));
+    assert.equal(f.input.isRaw, false);
+  }
+});
 test('empty confirmation stays active until an installed host is selected', async () => {
   const f = fixture(), pending = selectInstalledTargets(['codex'], f);
   f.input.write('\r');

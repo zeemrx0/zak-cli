@@ -10,6 +10,8 @@ const { selectInstalledTargets, finishKitSession } = require('./kit-update-picke
 const { refreshPinnedSource } = require('./pinned-source-refresh');
 const { withGithubAccountsAsync } = require('./github-accounts');
 const { compatibleDescriptor, readPin, writePin, removePin, lockSources } = require('./kit-source-pins');
+const { readPreference, preferredSource, describeSource } = require('./kit-source-preference');
+const { localSource } = require('./kit-local-source');
 const HOSTS = ['omp', 'pi', 'codex', 'claude'];
 function targetArgs(args) {
   const result = { hosts: null, scope: 'project', project: process.cwd(), readonly: false, rest: [] };
@@ -75,7 +77,9 @@ function legacy(descriptor) {
 async function kitLifecycle(operation, options, args, config, env = process.env, dependencies = {}) {
   if (!['install', 'update', 'check', 'uninstall'].includes(operation)) throw new Error('invalid kit lifecycle operation');
   const deps = { resolveTarget, discoverSource, kitSnapshot, pinnedSnapshot, runControlled,
-    readPin, writePin, removePin, lockSources, refreshPinnedSource, withGithubAccountsAsync, selectInstalledTargets, finishKitSession, ...dependencies };
+    readPin, writePin, removePin, lockSources, refreshPinnedSource, withGithubAccountsAsync, selectInstalledTargets, finishKitSession,
+    readPreference, localSource, ...dependencies };
+  const preference = deps.readPreference(env);
   const parsed = targetArgs(args), readonly = parsed.readonly || operation === 'check';
   const operationFlags = { install: [], update: ['--update', '--force'], check: ['--check'], uninstall: ['--uninstall', '--force'] }[operation];
   const descriptorFor = host => deps.resolveTarget({ host, scope: parsed.scope, project: parsed.project, env });
@@ -114,7 +118,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
         if (operation !== 'install') throw new Error('no trusted source pin; remove legacy targets with the original installer');
         legacy(descriptor);
       } else {
-        compatible(pin.source, options, operation);
+        if (!preference || pin.state !== 'installed' || operation !== 'update') compatible(pin.source, options, operation);
         if (pin.state !== 'installed' && operation !== 'uninstall' && pin.operation !== operation)
           throw new Error('pending source operation must be resumed or uninstalled');
         if (pin.state !== 'installed' && options.channel && options.channel !== pin.source.channel)
@@ -136,7 +140,13 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
             let downloadEnv = accountEnv;
             const auth = { env: accountEnv, run, tryAccounts: false,
               onAuthenticated(selected) { downloadEnv = selected; } };
-            if (pin) source = deps.refreshPinnedSource(compatible(pin.source, options, operation), auth);
+            if (preference) source = preferredSource(preference, config,
+              { transport: options.transport, channel: options.channel, pinnedChannel: pin?.source.channel },
+              (settled, channel) => deps.discoverSource(settled, { ...auth, channel }));
+            else if (pin?.source.distribution === 'local') {
+              if (options.transport) throw new Error('--transport does not apply to a local kit source');
+              source = deps.localSource(pin.source.path, options.channel);
+            } else if (pin) source = deps.refreshPinnedSource(compatible(pin.source, options, operation), auth);
             else {
               source = deps.discoverSource(validateConfig(config), { ...auth, channel: options.channel || 'stable' });
               if (options.transport === 'curl' && source.distribution === 'private') throw new Error('private kit requires authenticated transport');
@@ -145,6 +155,7 @@ async function kitLifecycle(operation, options, args, config, env = process.env,
             return deps.kitSnapshot(source, { readonly }, downloadEnv);
           }, { env });
         }
+        if (!args.includes('--json')) ui.info(`Kit source (${descriptor.host}): ${describeSource(source)} ${handle.snapshot.tag}`, { plain: !visual });
         const pending = { schema: 1, descriptor, source, snapshot: handle.snapshot, state: 'pending', operation };
         const forwarded = [...parsed.rest, '--target', descriptor.host,
           ...operationFlags.filter(flag => !parsed.rest.includes(flag))];

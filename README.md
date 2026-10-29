@@ -68,7 +68,19 @@ Do not manually delete installation records or active-operation guards.
 For installations made with an older installer, remove the kit with its original
 installer, review any retained files, then install it with `zak`.
 
-## 3. Update or remove the CLI
+## 3. Choose the kit source
+
+```sh
+zak kit source                    # interactive: Public remote, Private remote (only when authorized), Local folder
+zak kit source local ./z-agent-kit
+zak kit source public             # or: private
+```
+
+The selected source applies to new installs and to `zak update` of installed kits.
+A local source packs the folder with `npm pack` and installs it like a release, so you can test kit changes before you publish them.
+Run `zak kit source` with no argument in a non-interactive shell to print the current source.
+
+## 4. Update or remove the CLI
 
 ```sh
 zak self-update

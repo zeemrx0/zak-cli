@@ -9,6 +9,7 @@ const { hash, files, safeParents } = require('./cli-safety');
 const { acquire } = require('./cli-lock');
 const { privateDirectory, readPrivate } = require('./kit-private-state');
 const { validateSnapshot } = require('./kit-source-pins');
+const { packLocal } = require('./kit-local-source');
 function envelope(pkg, receipt, cleanup = () => {}) {
   let metadata;
   try { metadata = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'), 'utf8')); }
@@ -22,7 +23,8 @@ function cacheRoot(source, env) {
   if (!env.HOME || !path.isAbsolute(env.HOME) || env.XDG_DATA_HOME && !path.isAbsolute(env.XDG_DATA_HOME))
     throw new Error('absolute HOME and XDG_DATA_HOME are required');
   const base = env.XDG_DATA_HOME || path.join(env.HOME, '.local/share');
-  return safeParents(path.join(base, 'zak-kit-cache', hash(Buffer.from(source.repository + ':' + source.transport)), source.channel));
+  const key = source.transport === 'local' ? `${source.repository}:local:${source.path}` : `${source.repository}:${source.transport}`;
+  return safeParents(path.join(base, 'zak-kit-cache', hash(Buffer.from(key)), source.channel));
 }
 function load(root, source) {
   const file = path.join(root, 'cache.json');
@@ -46,8 +48,15 @@ async function kitPackage(source, refresh, env = process.env, options = {}) {
     const cached = load(root, source);
     if (cached) return options.envelope ? envelope(cached, readPrivate(path.join(root, 'cache.json'))) : cached;
   }
-  const release = await selectRelease(source, env);
-  const bytes = await downloadAsset(source, release, `z-agent-kit-${release.tag_name}.tgz`, env);
+  let bytes, tag;
+  if (source.transport === 'local') {
+    const packed = packLocal(source);
+    bytes = packed.bytes; tag = packed.tag;
+  } else {
+    const release = await selectRelease(source, env);
+    bytes = await downloadAsset(source, release, `z-agent-kit-${release.tag_name}.tgz`, env);
+    tag = release.tag_name;
+  }
   const id = hash(bytes);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zak-kit-'));
   let retained = false;
@@ -56,11 +65,11 @@ async function kitPackage(source, refresh, env = process.env, options = {}) {
     let metadata;
     try { metadata = JSON.parse(fs.readFileSync(path.join(pkg, 'package.json'))); }
     catch (cause) { throw new Error('invalid kit metadata', { cause }); }
-    if (metadata.name !== 'z-agent-kit' || `v${metadata.version}` !== release.tag_name || releaseRepository(metadata) !== source.repository ||
+    if (metadata.name !== 'z-agent-kit' || `v${metadata.version}` !== tag || releaseRepository(metadata) !== source.repository ||
         !fs.existsSync(path.join(pkg, 'scripts/ship-kit.cjs'))) throw new Error('kit archive identity or entry point mismatch');
-    if (metadata.private === true && source.transport !== 'gh') throw new Error('private kit requires authenticated gh transport');
+    if (metadata.private === true && !['gh', 'local'].includes(source.transport)) throw new Error('private kit requires authenticated gh transport');
     const inventory = files(pkg);
-    const receipt = { ...source, id, tag: release.tag_name, files: inventory };
+    const receipt = { ...source, id, tag, files: inventory };
     if (options.envelope) envelope(pkg, receipt);
     if (options.transient) {
       const result = envelope(pkg, receipt, () => fs.rmSync(temporary, { recursive: true, force: true }));
@@ -82,7 +91,7 @@ async function kitPackage(source, refresh, env = process.env, options = {}) {
         fs.renameSync(stage, generation);
       } else if (JSON.stringify(Object.entries(files(path.join(generation, 'package'))).sort()) !== JSON.stringify(Object.entries(inventory).sort()))
         throw new Error('foreign kit cache generation; kept');
-      const receipt = { ...source, id, tag: release.tag_name, files: inventory };
+      const receipt = { ...source, id, tag, files: inventory };
       // Cache activation is non-destructive. Failed writes leave existing generations intact.
       const next = path.join(root, 'cache-next.json');
       if (fs.existsSync(next)) throw new Error('interrupted cache activation; inspect cache-next.json');

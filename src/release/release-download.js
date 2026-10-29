@@ -1,3 +1,4 @@
+const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { accountAccessFailure } = require('../zak/github-accounts');
@@ -23,6 +24,11 @@ async function request(url) {
 }
 function validateSource(source, env = process.env) {
   validateGithubRepository(source.repository);
+  if (source.transport === 'local' || source.distribution === 'local') {
+    if (source.transport !== 'local' || source.distribution !== 'local' || !['stable', 'beta'].includes(source.channel) ||
+        typeof source.path !== 'string' || !path.isAbsolute(source.path)) throw new Error('invalid local kit source');
+    return;
+  }
   if (!['stable', 'beta'].includes(source.channel) || !['curl', 'gh'].includes(source.transport))
     throw new Error('unsupported release channel or transport');
   if (source.transport === 'gh' && (env.ZAK_RELEASE_API_URL || env.ZAK_RELEASE_BASE_URL))
@@ -30,6 +36,7 @@ function validateSource(source, env = process.env) {
 }
 async function selectRelease(source, env = process.env) {
   validateSource(source, env);
+  if (source.transport === 'local') throw new Error('local kit sources have no releases');
   const api = env.ZAK_RELEASE_API_URL || `https://api.github.com/repos/${source.repository}/releases`;
   async function json(suffix) {
     const bytes = source.transport === 'gh' ? gh(['api', '--hostname', 'github.com', `repos/${source.repository}/releases${suffix}`], env) : await request(api + suffix);

@@ -2,14 +2,18 @@ const path = require('node:path');
 const { assertNode } = require('../shared/node-runtime');
 const { selfUpdate, selfUninstall } = require('./cli-self-management');
 const { kitLifecycle } = require('./kit-lifecycle');
+const { kitSourceCommand } = require('./kit-source-command');
 const HELP = `zak — independent CLI and kit management
   zak --version
   zak self-update [--channel stable|beta]
   zak self-uninstall
   zak update [options] (alias for zak kit update)
   zak kit install|update|check|uninstall [options]
+  zak kit source [public | private | local <path>] (no argument: interactive picker)
 
-Kit source: authorized GitHub discovery; existing targets retain their source.
+Kit source: the source selected with 'zak kit source' applies to new installs and updates.
+Without a selection: authorized GitHub discovery; existing targets retain their source.
+A local source packs the folder with npm pack, then installs it like a release.
 Options: --transport curl|gh, --channel stable|beta
 Private sources require authenticated gh transport. CLI releases contain no kits.
 Kit options: [project] --target omp,pi,codex,claude --tier <tiers> --global (-g) --json
@@ -46,6 +50,10 @@ async function main(argv, root = path.resolve(__dirname, '../..')) {
   if (command !== 'kit') throw new Error(`unknown command: ${command}`);
   const [operation, ...options] = args;
   if (!operation || operation === '--help') { console.log(HELP); return 0; }
+  if (operation === 'source') {
+    if (options.includes('--help') || options.includes('-h')) { console.log(HELP); return 0; }
+    return kitSourceCommand(options, require(path.join(root, 'package.json')).kitSourceConfig);
+  }
   const { source, rest } = sourceArgs(options);
   kitArgs(operation, rest);
   if (rest.includes('--help') || rest.includes('-h')) { console.log(HELP); return 0; }

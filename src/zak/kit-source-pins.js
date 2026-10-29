@@ -47,7 +47,7 @@ function validatePin(value, descriptor) {
       !['install', 'update', 'uninstall'].includes(value.operation) ||
       pinKey(value.descriptor) !== pinKey(descriptor)) throw new Error('invalid installed source receipt');
   try { validateSource(value.source, {}); } catch { throw new Error('invalid installed source identity'); }
-  if (!['public', 'private'].includes(value.source.distribution) ||
+  if (!['public', 'private', 'local'].includes(value.source.distribution) ||
       value.source.distribution === 'private' && (value.source.transport !== 'gh' ||
         !Number.isSafeInteger(value.source.repositoryId) || value.source.repositoryId <= 0 ||
         !Number.isSafeInteger(value.source.ownerId) || value.source.ownerId <= 0))
